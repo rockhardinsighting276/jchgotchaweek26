@@ -27,3 +27,8 @@ class TagOut(BaseModel):
     new_target: str | None
     score: int
     notification: dict | None = None
+    cooldown_seconds: int
+
+
+class NicknameIn(BaseModel):
+    nickname: str | None = None

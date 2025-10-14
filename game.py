@@ -1,4 +1,5 @@
 import secrets, random
+from datetime import datetime
 from sqlalchemy.orm import Session
 from models import Player
 
@@ -23,6 +24,7 @@ def init_circle(db: Session, names: list[str], shuffle=True):
         player.target_id = nxt.id if nxt and nxt.id != player.id else None
         player.active = True
         player.score = 0
+        player.last_tag_at = None
 
     others = (
         db.query(Player)
@@ -33,6 +35,7 @@ def init_circle(db: Session, names: list[str], shuffle=True):
     for other in others:
         other.active = False
         other.target_id = None
+        other.last_tag_at = None
 
     db.commit()
     for player in players:
@@ -75,6 +78,8 @@ def do_tag(db: Session, tagger: Player):
         if only:
             only.target_id = None
 
+
+    tagger.last_tag_at = datetime.utcnow()
 
     db.commit()
     db.refresh(tagger)

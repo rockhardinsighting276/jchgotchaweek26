@@ -6,7 +6,11 @@ from datetime import datetime
 
 
 DB_URL = "sqlite:///./gotcha.db"
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DB_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -23,6 +27,8 @@ class Player(Base):
     target = relationship("Player", remote_side=[id], uselist=False)
     password_hash = Column(String, nullable=True)
     avatar_path = Column(String, nullable=True)
+    nickname = Column(String, nullable=True)
+    last_tag_at = Column(DateTime, nullable=True)
 
     def public(self):
         return {
@@ -30,6 +36,7 @@ class Player(Base):
             "name": self.name,
             "score": self.score,
             "active": self.active,
+            "nickname": self.nickname,
             "avatar_url": self.avatar_url(),
         }
 
@@ -51,6 +58,12 @@ def ensure_columns():
     if "avatar_path" not in cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE players ADD COLUMN avatar_path TEXT"))
+    if "nickname" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE players ADD COLUMN nickname TEXT"))
+    if "last_tag_at" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE players ADD COLUMN last_tag_at DATETIME"))
 
 
 ensure_columns()
@@ -70,6 +83,7 @@ class Notification(Base):
         return {
             "id": self.id,
             "tagger": self.tagger.name if self.tagger else None,
+            "tagger_nickname": self.tagger.nickname if self.tagger else None,
             "target": self.target_name,
             "message": self.message,
             "created_at": self.created_at.isoformat() + "Z",

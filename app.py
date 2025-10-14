@@ -6,8 +6,9 @@ import os
 import uuid
 from pathlib import Path
 import bcrypt
+from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, TagIn, InitIn, TagOut
+from schema import RegisterIn, LoginIn, TagIn, InitIn, TagOut, NicknameIn
 from game import init_circle, do_tag, mint_token
 
 app = FastAPI()
@@ -20,6 +21,22 @@ AVATAR_DIR = Path("static/avatars")
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+TAG_COOLDOWN = timedelta(minutes=5)
+
+def cooldown_seconds(player: Player) -> int:
+    last = player.last_tag_at
+    if not last:
+        return 0
+    if isinstance(last, str):
+        try:
+            last = datetime.fromisoformat(last)
+        except ValueError:
+            return 0
+    expires = last + TAG_COOLDOWN
+    remaining = expires - datetime.utcnow()
+    if remaining.total_seconds() <= 0:
+        return 0
+    return int(remaining.total_seconds())
 
 
 # --- DB Dependency ---
@@ -145,6 +162,8 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
             "name": existing.name,
             "is_admin": existing.is_admin,
             "avatar_url": existing.avatar_url(),
+            "nickname": existing.nickname,
+            "cooldown_seconds": cooldown_seconds(existing),
         }
 
     player = Player(
@@ -161,6 +180,8 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
         "name": player.name,
         "is_admin": player.is_admin,
         "avatar_url": player.avatar_url(),
+        "nickname": player.nickname,
+        "cooldown_seconds": cooldown_seconds(player),
     }
 
 
@@ -181,6 +202,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         "name": p.name,
         "is_admin": p.is_admin,
         "avatar_url": p.avatar_url(),
+        "nickname": p.nickname,
+        "cooldown_seconds": cooldown_seconds(p),
     }
 
 
@@ -193,6 +216,8 @@ def me(p: Player = Depends(auth_player)):
         "active": p.active,
         "is_admin": p.is_admin,
         "avatar_url": p.avatar_url(),
+        "nickname": p.nickname,
+        "cooldown_seconds": cooldown_seconds(p),
     }
 
 
@@ -202,6 +227,19 @@ def target(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
         return {"target": None}
     t = db.get(Player, p.target_id)
     return {"target": t.name if t and t.active else None}
+
+
+@app.post("/me/nickname")
+async def update_nickname(body: NicknameIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    nickname = (body.nickname or "").strip()
+    if nickname and len(nickname) > 40:
+        raise HTTPException(400, "Nickname must be 40 characters or fewer")
+    p.nickname = nickname or None
+    db.commit()
+    db.refresh(p)
+    leaders = [pl.public() for pl in db.query(Player).order_by(Player.score.desc()).all()]
+    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    return {"nickname": p.nickname}
 
 
 @app.post("/me/avatar")
@@ -254,6 +292,12 @@ async def tag(
     p: Player = Depends(auth_player),
     db: Session = Depends(get_db),
 ):
+    remaining = cooldown_seconds(p)
+    if remaining > 0:
+        raise HTTPException(
+            429,
+            {"message": "Cooldown active", "cooldown_seconds": remaining},
+        )
     try:
         tagger, new_target, eliminated = do_tag(db, p)
     except ValueError as e:
@@ -283,6 +327,7 @@ async def tag(
         "new_target": (new_target.name if new_target else None),
         "score": tagger.score,
         "notification": notification_payload,
+        "cooldown_seconds": cooldown_seconds(tagger),
     }
 
 

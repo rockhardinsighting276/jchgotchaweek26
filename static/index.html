@@ -108,9 +108,21 @@
       flex-direction: column;
       gap: 0.5rem;
     }
+    .nickname-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
     .player-cell {
       display: flex;
       align-items: center;
+      gap: 0.35rem;
+    }
+    .small-handle {
+      margin-left: 0.4rem;
+      font-size: 0.8rem;
+      color: #94a3b8;
     }
     .zap-layer {
       position: fixed;
@@ -318,6 +330,7 @@
               <img id="player-avatar" class="avatar" src="" alt="Your avatar" />
               <div>
                 <h2 style="margin: 0;">Welcome, <span id="player-name"></span></h2>
+                <div class="muted">Account name: <span id="player-handle"></span></div>
                 <div class="muted">Score: <span id="player-score">0</span></div>
               </div>
             </div>
@@ -325,6 +338,11 @@
               <label class="muted" for="avatar-input">Update avatar (max 2MB)</label>
               <input id="avatar-input" type="file" accept="image/*">
               <button type="button" id="upload-avatar-btn" class="secondary">Upload Avatar</button>
+            </div>
+            <div class="nickname-controls">
+              <label for="nickname-input">Nickname <span class="muted">(optional)</span></label>
+              <input id="nickname-input" placeholder="Enter nickname" maxlength="40">
+              <button type="button" id="save-nickname-btn">Save Nickname</button>
             </div>
             <button type="button" id="logout-btn" class="secondary" style="margin-top: 1rem; max-width: 160px;">Logout</button>
           </div>
@@ -337,6 +355,9 @@
             <label for="tag-message">Optional message to everyone</label>
             <textarea id="tag-message" placeholder="Share the story (max 280 characters)"></textarea>
             <button type="button" id="tag-btn">Tag Successful</button>
+            <div class="muted" style="margin-top: 0.5rem;">
+              Next tag available in: <span id="tag-cooldown">Ready</span>
+            </div>
           </div>
 
           <div id="admin-panel" class="card admin-only hidden">
@@ -417,7 +438,9 @@
       wsTicker: null,
       leaders: [],
       notifications: [],
-      currentPage: "tag"
+      currentPage: "tag",
+      cooldownSeconds: 0,
+      cooldownTimer: null,
     };
 
     function showStatus(message, type = "info") {
@@ -444,11 +467,24 @@
 
     function setUser(user) {
       state.user = user;
-      document.getElementById("player-name").textContent = user?.name ?? "";
+      const displayName = user ? (user.nickname || user.name || "") : "";
+      document.getElementById("player-name").textContent = displayName;
+      document.getElementById("player-handle").textContent = user?.name ?? "";
       document.getElementById("player-score").textContent = user?.score ?? 0;
       updateAvatarDisplay(user?.avatar_url);
       const adminPanel = document.getElementById("admin-panel");
       adminPanel.classList.toggle("hidden", !user?.is_admin);
+      const nicknameInput = document.getElementById("nickname-input");
+      if (nicknameInput) {
+        nicknameInput.value = user?.nickname ?? "";
+      }
+      if (!user) {
+        setCooldown(0);
+      } else if (typeof user.cooldown_seconds === "number") {
+        setCooldown(user.cooldown_seconds);
+      } else {
+        setCooldown(state.cooldownSeconds);
+      }
     }
 
     function updateAvatarDisplay(url) {
@@ -471,6 +507,53 @@
       Object.entries(pages).forEach(([name, el]) => {
         el.classList.toggle("hidden", name !== page);
       });
+    }
+
+    function updateCooldownDisplay() {
+      const label = document.getElementById("tag-cooldown");
+      const button = document.getElementById("tag-btn");
+      if (!label || !button) return;
+      if (state.cooldownSeconds <= 0) {
+        label.textContent = "Ready";
+        button.disabled = false;
+        return;
+      }
+      const minutes = Math.floor(state.cooldownSeconds / 60);
+      const seconds = state.cooldownSeconds % 60;
+      label.textContent = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+      button.disabled = true;
+    }
+
+    function setCooldown(seconds) {
+      const value = Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : 0;
+      state.cooldownSeconds = value;
+      if (state.cooldownTimer) {
+        clearInterval(state.cooldownTimer);
+        state.cooldownTimer = null;
+      }
+      updateCooldownDisplay();
+      if (state.cooldownSeconds > 0) {
+        state.cooldownTimer = setInterval(() => {
+          if (state.cooldownSeconds <= 1) {
+            state.cooldownSeconds = 0;
+            clearInterval(state.cooldownTimer);
+            state.cooldownTimer = null;
+          } else {
+            state.cooldownSeconds -= 1;
+          }
+          updateCooldownDisplay();
+        }, 1000);
+      }
+    }
+
+    function formatCooldown(seconds) {
+      const total = Math.max(0, Math.ceil(seconds));
+      const minutes = Math.floor(total / 60);
+      const secs = total % 60;
+      if (minutes > 0) {
+        return `${minutes} minute${minutes === 1 ? "" : "s"} ${secs} second${secs === 1 ? "" : "s"}`;
+      }
+      return `${secs} second${secs === 1 ? "" : "s"}`;
     }
 
     function renderLeaderboard(leaders) {
@@ -499,8 +582,15 @@
         avatar.src = leader.avatar_url || DEFAULT_AVATAR;
         avatar.alt = `${leader.name}'s avatar`;
         const nameText = document.createElement("span");
-        nameText.textContent = leader.name;
+        const displayName = leader.nickname || leader.name;
+        nameText.textContent = displayName;
         nameWrap.append(avatar, nameText);
+        if (leader.nickname) {
+          const handle = document.createElement("span");
+          handle.className = "small-handle";
+          handle.textContent = `(@${leader.name})`;
+          nameWrap.appendChild(handle);
+        }
         name.appendChild(nameWrap);
         const score = document.createElement("td");
         score.textContent = leader.score;
@@ -555,11 +645,17 @@
         avatar.className = "avatar small";
         avatar.src = item.tagger_avatar || DEFAULT_AVATAR;
         avatar.alt = `${item.tagger || "Player"} avatar`;
-        const taggerName = item.tagger ?? "Someone";
+        const taggerName = item.tagger_nickname || item.tagger || "Someone";
         const targetName = item.target ?? "their target";
         const text = document.createElement("span");
         text.textContent = `${taggerName} tagged ${targetName}`;
         headerWrap.append(avatar, text);
+        if (item.tagger_nickname && item.tagger) {
+          const handle = document.createElement("span");
+          handle.className = "small-handle";
+          handle.textContent = `(@${item.tagger})`;
+          headerWrap.appendChild(handle);
+        }
         heading.appendChild(headerWrap);
         const message = document.createElement("div");
         message.style.marginTop = "0.25rem";
@@ -598,17 +694,34 @@
       const res = await fetch(path, opts);
       if (!res.ok) {
         let detail = res.statusText;
+        let cooldownSeconds;
         try {
           const payload = await res.json();
           if (payload?.detail) {
-            detail = payload.detail;
+            const info = payload.detail;
+            if (info && typeof info === "object") {
+              if (typeof info.message === "string") {
+                detail = info.message;
+              } else {
+                detail = JSON.stringify(info);
+              }
+              if (typeof info.cooldown_seconds === "number") {
+                cooldownSeconds = info.cooldown_seconds;
+              }
+            } else {
+              detail = info;
+            }
           } else {
             detail = JSON.stringify(payload);
           }
         } catch (_) {
-          // ignore
+          // ignore json parse errors
         }
-        throw new Error(detail || `Request failed (${res.status})`);
+        const error = new Error(detail || `Request failed (${res.status})`);
+        if (typeof cooldownSeconds === "number") {
+          error.cooldownSeconds = cooldownSeconds;
+        }
+        throw error;
       }
       if (res.status === 204) return null;
       return res.json();
@@ -822,9 +935,17 @@
           renderNotifications(updated);
         }
         messageInput.value = "";
+        if (typeof res.cooldown_seconds === "number") {
+          setCooldown(res.cooldown_seconds);
+        }
         playZap();
         showStatus("Tag recorded!", "success");
       } catch (err) {
+        if (typeof err.cooldownSeconds === "number") {
+          setCooldown(err.cooldownSeconds);
+          showStatus(`On cooldown — try again in ${formatCooldown(err.cooldownSeconds)}.`, "error");
+          return;
+        }
         showStatus(`Tag failed: ${err.message}`, "error");
       }
     }
@@ -852,6 +973,34 @@
         showStatus("Avatar updated!", "success");
       } catch (err) {
         showStatus(`Failed to upload avatar: ${err.message}`, "error");
+      }
+    }
+
+    async function handleNicknameSave() {
+      if (!state.token) {
+        showStatus("Log in before setting a nickname.", "error");
+        return;
+      }
+      const input = document.getElementById("nickname-input");
+      if (!input) return;
+      const nickname = input.value.trim();
+      if (nickname.length > 40) {
+        showStatus("Nickname must be 40 characters or fewer.", "error");
+        return;
+      }
+      try {
+        const res = await api("/me/nickname", {
+          method: "POST",
+          body: { nickname: nickname || null },
+        });
+        const updated = Object.assign({}, state.user || {}, {
+          nickname: res.nickname || null,
+          cooldown_seconds: state.cooldownSeconds,
+        });
+        setUser(updated);
+        showStatus("Nickname updated!", "success");
+      } catch (err) {
+        showStatus(`Failed to update nickname: ${err.message}`, "error");
       }
     }
 
@@ -896,9 +1045,15 @@
       document.getElementById("target-name").textContent = "No target yet.";
       renderNotifications([]);
       document.getElementById("tag-message").value = "";
+      document.getElementById("player-name").textContent = "";
+      document.getElementById("player-handle").textContent = "";
       const avatarInput = document.getElementById("avatar-input");
       if (avatarInput) {
         avatarInput.value = "";
+      }
+      const nicknameInput = document.getElementById("nickname-input");
+      if (nicknameInput) {
+        nicknameInput.value = "";
       }
       renderLeaderboard([]);
       switchPage("tag");
@@ -919,6 +1074,7 @@
       document.getElementById("refresh-leaderboard").addEventListener("click", refreshLeaderboard);
       document.getElementById("logout-btn").addEventListener("click", () => logout(true));
       document.getElementById("upload-avatar-btn").addEventListener("click", handleAvatarUpload);
+      document.getElementById("save-nickname-btn").addEventListener("click", handleNicknameSave);
       document.querySelectorAll(".nav-tabs .tab").forEach((tab) => {
         tab.addEventListener("click", () => switchPage(tab.dataset.page));
       });
