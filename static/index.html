@@ -112,6 +112,58 @@
       display: flex;
       align-items: center;
     }
+    .zap-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      overflow: hidden;
+      display: none;
+    }
+    .zap-layer.active {
+      display: block;
+    }
+    .zap-flash {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 65%);
+      animation: flash 5s ease-out forwards;
+    }
+    .zap-bolt {
+      position: absolute;
+      width: 4px;
+      height: 80vh;
+      top: -20vh;
+      left: 50%;
+      background: linear-gradient(180deg, rgba(255,255,255,0) 0%, #facc15 30%, #f97316 70%, rgba(255,255,255,0) 100%);
+      filter: drop-shadow(0 0 16px rgba(250, 204, 21, 0.8));
+      transform-origin: top;
+      animation: bolt 0.6s ease-out forwards;
+    }
+    @keyframes flash {
+      0% { opacity: 0; }
+      5% { opacity: 1; }
+      12% { opacity: 0.3; }
+      20% { opacity: 0; }
+      40% { opacity: 0.25; }
+      50% { opacity: 0.05; }
+      70% { opacity: 0.2; }
+      100% { opacity: 0; }
+    }
+    @keyframes bolt {
+      0% {
+        opacity: 0;
+        transform: translateX(0) scaleY(0.4) skewX(0deg);
+      }
+      20% {
+        opacity: 1;
+        transform: translateX(var(--bolt-x)) scaleY(1) skewX(var(--bolt-skew));
+      }
+      100% {
+        opacity: 0;
+        transform: translateX(calc(var(--bolt-x) * 0.6)) scaleY(0.3) skewX(calc(var(--bolt-skew) * 0.5));
+      }
+    }
     label {
       display: block;
       font-size: 0.9rem;
@@ -225,6 +277,7 @@
     <h1>Gotcha Week</h1>
 
     <div id="status" class="status hidden"></div>
+    <div id="zap-layer" class="zap-layer"></div>
 
     <section id="auth-section" class="grid two">
       <div class="card">
@@ -561,6 +614,38 @@
       return res.json();
     }
 
+    function playZap() {
+      const layer = document.getElementById("zap-layer");
+      if (!layer) return;
+      layer.innerHTML = "";
+      layer.classList.add("active");
+
+      const flash = document.createElement("div");
+      flash.className = "zap-flash";
+      layer.appendChild(flash);
+
+      const spawnBolt = () => {
+        const bolt = document.createElement("div");
+        bolt.className = "zap-bolt";
+        const offset = (Math.random() * 200 - 100) + "%";
+        const skew = (Math.random() * 40 - 20) + "deg";
+        bolt.style.setProperty("--bolt-x", offset);
+        bolt.style.setProperty("--bolt-skew", skew);
+        bolt.style.left = Math.random() * 100 + "%";
+        layer.appendChild(bolt);
+        setTimeout(() => bolt.remove(), 700);
+      };
+
+      spawnBolt();
+      const boltTimer = setInterval(spawnBolt, 600);
+
+      setTimeout(() => {
+        clearInterval(boltTimer);
+        layer.classList.remove("active");
+        layer.innerHTML = "";
+      }, 5000);
+    }
+
     async function refreshMe() {
       if (!state.token) return;
       try {
@@ -737,6 +822,7 @@
           renderNotifications(updated);
         }
         messageInput.value = "";
+        playZap();
         showStatus("Tag recorded!", "success");
       } catch (err) {
         showStatus(`Tag failed: ${err.message}`, "error");
