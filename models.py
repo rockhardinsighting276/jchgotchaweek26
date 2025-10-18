@@ -29,6 +29,7 @@ class Player(Base):
     avatar_path = Column(String, nullable=True)
     nickname = Column(String, nullable=True)
     last_tag_at = Column(DateTime, nullable=True)
+    score_last_updated = Column(DateTime, nullable=True)
 
     def public(self):
         return {
@@ -64,6 +65,9 @@ def ensure_columns():
     if "last_tag_at" not in cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE players ADD COLUMN last_tag_at DATETIME"))
+    if "score_last_updated" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE players ADD COLUMN score_last_updated DATETIME"))
 
 
 ensure_columns()

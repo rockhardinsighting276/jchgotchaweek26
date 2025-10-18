@@ -25,6 +25,7 @@ def init_circle(db: Session, names: list[str], shuffle=True):
         player.active = True
         player.score = 0
         player.last_tag_at = None
+        player.score_last_updated = datetime.utcnow()
 
     others = (
         db.query(Player)
@@ -36,6 +37,7 @@ def init_circle(db: Session, names: list[str], shuffle=True):
         other.active = False
         other.target_id = None
         other.last_tag_at = None
+        other.score_last_updated = datetime.utcnow()
 
     db.commit()
     for player in players:
@@ -79,7 +81,9 @@ def do_tag(db: Session, tagger: Player):
             only.target_id = None
 
 
-    tagger.last_tag_at = datetime.utcnow()
+    now = datetime.utcnow()
+    tagger.last_tag_at = now
+    tagger.score_last_updated = now
 
     db.commit()
     db.refresh(tagger)

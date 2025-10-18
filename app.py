@@ -21,7 +21,7 @@ AVATAR_DIR = Path("static/avatars")
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-TAG_COOLDOWN = timedelta(minutes=5)
+TAG_COOLDOWN = timedelta(minutes=0.1)
 
 def cooldown_seconds(player: Player) -> int:
     last = player.last_tag_at
@@ -112,7 +112,13 @@ async def ws_leaderboard(ws: WebSocket):
     try:
         db = SessionLocal()
         try:
-            leaders = [p.public() for p in db.query(Player).order_by(Player.score.desc()).all()]
+            leaders = [
+                p.public()
+                for p in db.query(Player)
+                .filter(Player.is_admin == False)
+                .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+                .all()
+            ]
             notes = [
                 n.public()
                 for n in db.query(Notification)
@@ -155,6 +161,8 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
             existing.password_hash = hash_password(body.password)
         if is_admin and not existing.is_admin:
             existing.is_admin = True
+        if existing.score_last_updated is None:
+            existing.score_last_updated = datetime.utcnow()
         db.commit()
         db.refresh(existing)
         return {
@@ -171,6 +179,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
         token=mint_token(),
         is_admin=is_admin,
         password_hash=hash_password(body.password),
+        score_last_updated=datetime.utcnow(),
     )
     db.add(player)
     db.commit()
@@ -237,7 +246,13 @@ async def update_nickname(body: NicknameIn, p: Player = Depends(auth_player), db
     p.nickname = nickname or None
     db.commit()
     db.refresh(p)
-    leaders = [pl.public() for pl in db.query(Player).order_by(Player.score.desc()).all()]
+    leaders = [
+        pl.public()
+        for pl in db.query(Player)
+        .filter(Player.is_admin == False)
+        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+        .all()
+    ]
     await hub.broadcast({"type": "leaderboard", "leaders": leaders})
     return {"nickname": p.nickname}
 
@@ -280,7 +295,13 @@ async def upload_avatar(
     db.commit()
     db.refresh(p)
 
-    leaders = [pl.public() for pl in db.query(Player).order_by(Player.score.desc()).all()]
+    leaders = [
+        pl.public()
+        for pl in db.query(Player)
+        .filter(Player.is_admin == False)
+        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+        .all()
+    ]
     await hub.broadcast({"type": "leaderboard", "leaders": leaders})
 
     return {"avatar_url": p.avatar_url()}
@@ -303,7 +324,13 @@ async def tag(
     except ValueError as e:
         raise HTTPException(400, str(e))
     # broadcast leaderboard
-    leaders = [pl.public() for pl in db.query(Player).order_by(Player.score.desc()).all()]
+    leaders = [
+        pl.public()
+        for pl in db.query(Player)
+        .filter(Player.is_admin == False)
+        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+        .all()
+    ]
     await hub.broadcast({"type": "leaderboard", "leaders": leaders})
 
     notification_payload = None
@@ -333,7 +360,13 @@ async def tag(
 
 @app.get("/leaderboard")
 def leaderboard(db: Session = Depends(get_db)):
-    leaders = [p.public() for p in db.query(Player).order_by(Player.score.desc()).all()]
+    leaders = [
+        p.public()
+        for p in db.query(Player)
+        .filter(Player.is_admin == False)
+        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+        .all()
+    ]
     return {"leaders": leaders}
 
 
@@ -362,7 +395,13 @@ async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session
         init_circle(db, cleaned, shuffle=body.shuffle)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    leaders = [pl.public() for pl in db.query(Player).order_by(Player.score.desc()).all()]
+    leaders = [
+        pl.public()
+        for pl in db.query(Player)
+        .filter(Player.is_admin == False)
+        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
+        .all()
+    ]
     await hub.broadcast({"type": "leaderboard", "leaders": leaders})
     return {"ok": True}
 
