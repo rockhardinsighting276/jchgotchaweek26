@@ -1,5 +1,11 @@
-# gotcha_week
+# Gotcha Week
+## Docker app
+Pull image from ```ghcr.io```
 
+Change environment variables as needed
+
+
+## Non-docker app
 Clone with ```git clone```
 
 Setup using 
