@@ -1,9 +1,7 @@
 # Gotcha Week
 ## Docker app
-Pull image from ```ghcr.io```
-
-Change environment variables as needed
-
+Pull image from ```ghcr.io/rockhardinsighting276/jchgotchaweek26:latest```, see sample ```docker-compose.yml```
+ 
 
 ## Non-docker app
 Clone with ```git clone```
