@@ -1,7 +1,7 @@
 services:
-  assassins:
+  gotcha_week:
     build: .
-    container_name: assassins
+    container_name: gotcha_week
     restart: unless-stopped
     environment:
       ADMIN_SECRET: ${ADMIN_SECRET:?set ADMIN_SECRET in .env}
