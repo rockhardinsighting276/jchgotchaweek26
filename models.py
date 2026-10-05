@@ -1,11 +1,11 @@
 # python-fastapi/models.py
+import os
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, create_engine, text, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy import inspect
 from datetime import datetime
 
-
-DB_URL = "sqlite:///./gotcha.db"
+DB_URL = os.getenv("DATABASE_URL", "sqlite:///./gotcha.db")
 engine = create_engine(
     DB_URL,
     connect_args={"check_same_thread": False, "timeout": 30},

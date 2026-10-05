@@ -1,0 +1,13 @@
+services:
+  assassins:
+    build: .
+    container_name: assassins
+    restart: unless-stopped
+    environment:
+      ADMIN_SECRET: ${ADMIN_SECRET:?set ADMIN_SECRET in .env}
+      TAG_COOLDOWN_SECONDS: ${TAG_COOLDOWN_SECONDS:-6}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data  # SQLite DB
+      - ./avatars:/app/static/avatars # Uploaded avatars

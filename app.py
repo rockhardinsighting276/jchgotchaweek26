@@ -14,9 +14,9 @@ from game import init_circle, do_tag, mint_token
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "changeme")
-MAX_PASSWORD_BYTES = 72
+TAG_COOLDOWN = timedelta(seconds=float(os.getenv("TAG_COOLDOWN_SECONDS", "6")))
+MAX_PASSWORD_BYTES = 128
 AVATAR_DIR = Path("static/avatars")
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
@@ -379,6 +379,7 @@ def notifications(db: Session = Depends(get_db)):
         .limit(50)
     ]
     return {"notifications": notes}
+
 # --- Admin ---
 @app.post("/admin/init")
 async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
