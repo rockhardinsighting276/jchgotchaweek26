@@ -13,10 +13,6 @@ class LoginIn(BaseModel):
     password: str
 
 
-class TagIn(BaseModel):
-    message: str | None = None
-
-
 class InitIn(BaseModel):
     players: List[str]
     shuffle: bool = True
@@ -32,3 +28,7 @@ class TagOut(BaseModel):
 
 class NicknameIn(BaseModel):
     nickname: str | None = None
+
+
+class AnnounceIn(BaseModel):
+    message: str

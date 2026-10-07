@@ -1,9 +1,10 @@
 # python-fastapi/models.py
-import os
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, create_engine, text, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy import inspect
+import os
 from datetime import datetime
+
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./gotcha.db")
 engine = create_engine(
@@ -76,23 +77,39 @@ ensure_columns()
 class Notification(Base):
     __tablename__ = "notifications"
     id = Column(Integer, primary_key=True)
+    # Who acted: the tagger for "tag"/"tagged" notes, the sending admin for "global".
     tagger_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    message = Column(String(500), nullable=False)
+    # "tag" | "tagged" | "global". NULL = old public tag message, no longer shown.
+    kind = Column(String, nullable=True)
+    # Who may see it. NULL only for global announcements.
+    recipient_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    message = Column(String(1000), nullable=False)
     target_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     tagger = relationship("Player", foreign_keys=[tagger_id])
+    recipient = relationship("Player", foreign_keys=[recipient_id])
 
     def public(self):
         return {
             "id": self.id,
-            "tagger": self.tagger.name if self.tagger else None,
-            "tagger_nickname": self.tagger.nickname if self.tagger else None,
-            "target": self.target_name,
+            "kind": self.kind,
             "message": self.message,
+            "target": self.target_name,
             "created_at": self.created_at.isoformat() + "Z",
-            "tagger_avatar": self.tagger.avatar_url() if self.tagger else None,
         }
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_notification_columns():
+    cols = {col["name"] for col in inspect(engine).get_columns("notifications")}
+    with engine.begin() as conn:
+        if "kind" not in cols:
+            conn.execute(text("ALTER TABLE notifications ADD COLUMN kind TEXT"))
+        if "recipient_id" not in cols:
+            conn.execute(text("ALTER TABLE notifications ADD COLUMN recipient_id INTEGER REFERENCES players(id)"))
+
+
+ensure_notification_columns()

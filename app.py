@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect, Body, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 import os
 import uuid
@@ -8,20 +9,20 @@ from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, TagIn, InitIn, TagOut, NicknameIn
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn
 from game import init_circle, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "changeme")
-TAG_COOLDOWN = timedelta(seconds=float(os.getenv("TAG_COOLDOWN_SECONDS", "6")))
-MAX_PASSWORD_BYTES = 128
+MAX_PASSWORD_BYTES = 72
 AVATAR_DIR = Path("static/avatars")
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-TAG_COOLDOWN = timedelta(minutes=0.1)
+TAG_COOLDOWN = timedelta(seconds=float(os.getenv("TAG_COOLDOWN_SECONDS", "6")))
 
 def cooldown_seconds(player: Player) -> int:
     last = player.last_tag_at
@@ -97,7 +98,7 @@ class Hub:
         for ws in list(self.conns):
             try:
                 await ws.send_json(payload)
-            except WebSocketDisconnect:
+            except Exception:
                 dead.append(ws)
         for ws in dead:
             self.remove(ws)
@@ -119,16 +120,9 @@ async def ws_leaderboard(ws: WebSocket):
                 .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
                 .all()
             ]
-            notes = [
-                n.public()
-                for n in db.query(Notification)
-                .order_by(Notification.created_at.desc())
-                .limit(25)
-            ]
         finally:
             db.close()
         await ws.send_json({"type": "leaderboard", "leaders": leaders})
-        await ws.send_json({"type": "notifications", "notifications": notes})
         while True:
             await ws.receive_text() # keepalive; client sends pings
     except WebSocketDisconnect:
@@ -309,7 +303,6 @@ async def upload_avatar(
 
 @app.post("/tag", response_model=TagOut)
 async def tag(
-    body: TagIn | None = Body(default=None),
     p: Player = Depends(auth_player),
     db: Session = Depends(get_db),
 ):
@@ -320,10 +313,9 @@ async def tag(
             {"message": "Cooldown active", "cooldown_seconds": remaining},
         )
     try:
-        tagger, new_target, eliminated = do_tag(db, p)
+        tagger, new_target, eliminated, note = do_tag(db, p)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    # broadcast leaderboard
     leaders = [
         pl.public()
         for pl in db.query(Player)
@@ -332,28 +324,13 @@ async def tag(
         .all()
     ]
     await hub.broadcast({"type": "leaderboard", "leaders": leaders})
-
-    notification_payload = None
-    if body and body.message:
-        message = body.message.strip()
-        if message:
-            if len(message) > 280:
-                raise HTTPException(400, "Message too long (max 280 characters)")
-            note = Notification(
-                tagger_id=tagger.id,
-                message=message,
-                target_name=eliminated.name if eliminated else None,
-            )
-            db.add(note)
-            db.commit()
-            db.refresh(note)
-            notification_payload = note.public()
-            await hub.broadcast({"type": "notification", "notification": notification_payload})
+    # Content-free ping: clients re-fetch their own private notifications.
+    await hub.broadcast({"type": "notifications_changed"})
     return {
         "ok": True,
         "new_target": (new_target.name if new_target else None),
         "score": tagger.score,
-        "notification": notification_payload,
+        "notification": note.public(),
         "cooldown_seconds": cooldown_seconds(tagger),
     }
 
@@ -371,14 +348,16 @@ def leaderboard(db: Session = Depends(get_db)):
 
 
 @app.get("/notifications")
-def notifications(db: Session = Depends(get_db)):
-    notes = [
-        n.public()
-        for n in db.query(Notification)
-        .order_by(Notification.created_at.desc())
+def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    # Only global announcements and notifications addressed to this player.
+    notes = (
+        db.query(Notification)
+        .filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
         .limit(50)
-    ]
-    return {"notifications": notes}
+        .all()
+    )
+    return {"notifications": [n.public() for n in notes]}
 
 # --- Admin ---
 @app.post("/admin/init")
@@ -417,3 +396,20 @@ def admin_mapping(p: Player = Depends(auth_player), db: Session = Depends(get_db
         tgt = db.get(Player, pl.target_id) if pl.target_id else None
         res.append({"player": pl.name, "active": pl.active, "target": (tgt.name if tgt else None), "score": pl.score})
     return {"mapping": res}
+
+
+@app.post("/admin/announce")
+async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "Message is required")
+    if len(message) > 1000:
+        raise HTTPException(400, "Message too long (max 1000 characters)")
+    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message)
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    await hub.broadcast({"type": "notifications_changed"})
+    return {"ok": True, "notification": note.public()}

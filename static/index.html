@@ -274,8 +274,6 @@
             <p id="target-wrapper">
               <span id="target-name">No target yet.</span>
             </p>
-            <label for="tag-message">Optional message to everyone</label>
-            <textarea id="tag-message" placeholder="Share the story (max 280 characters)"></textarea>
             <button type="button" id="tag-btn">Tag Successful</button>
             <div class="muted" style="margin-top: 0.5rem;">
               Next tag available in: <span id="tag-cooldown">Ready</span>
@@ -298,6 +296,11 @@
                 <span class="muted">Requires at least 2 names.</span>
               </div>
               <button type="submit" class="danger">Start / Reset Game</button>
+            </form>
+            <form id="announce-form" style="margin-top: 1.5rem;">
+              <label for="announce-message">Announcement to all players</label>
+              <textarea id="announce-message" maxlength="1000" placeholder="Rule changes, schedule updates, reminders (max 1000 characters)"></textarea>
+              <button type="submit">Send announcement</button>
             </form>
             <div id="mapping-view" class="hidden">
               <h3 style="margin-bottom: 0.5rem;">Target Mapping</h3>
@@ -560,40 +563,23 @@
         const li = document.createElement("li");
         li.style.padding = "0.75rem 0";
         li.style.borderBottom = "1px solid var(--border)";
-        const heading = document.createElement("div");
-        heading.style.fontWeight = "600";
-        const headerWrap = document.createElement("div");
-        headerWrap.className = "player-cell";
-        const avatar = document.createElement("img");
-        avatar.className = "avatar small";
-        avatar.src = item.tagger_avatar || DEFAULT_AVATAR;
-        avatar.alt = `${item.tagger || "Player"} avatar`;
-        const taggerName = item.tagger_nickname || item.tagger || "Someone";
-        const targetName = item.target ?? "their target";
-        const text = document.createElement("span");
-        text.textContent = `${taggerName} tagged ${targetName}`;
-        headerWrap.append(avatar, text);
-        if (item.tagger_nickname && item.tagger) {
-          const handle = document.createElement("span");
-          handle.className = "small-handle";
-          handle.textContent = `(@${item.tagger})`;
-          headerWrap.appendChild(handle);
+        if (item.kind === "global") {
+          const badge = document.createElement("span");
+          badge.className = "pill";
+          badge.style.marginLeft = "0";
+          badge.textContent = "Announcement";
+          li.appendChild(badge);
         }
-        heading.appendChild(headerWrap);
         const message = document.createElement("div");
         message.style.marginTop = "0.25rem";
-        if (item.message) {
-          message.textContent = item.message;
-        } else {
-          message.textContent = "(no message)";
-          message.classList.add("muted");
-        }
+        message.style.whiteSpace = "pre-wrap";
+        message.textContent = item.message;
         const time = document.createElement("div");
         time.className = "muted";
         time.style.marginTop = "0.25rem";
         const date = new Date(item.created_at);
         time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString();
-        li.append(heading, message, time);
+        li.append(message, time);
         wrapper.appendChild(li);
       });
     }
@@ -719,10 +705,18 @@
       }
     }
 
+    async function loadNotifications() {
+      if (!state.token) {
+        renderNotifications([]);
+        return;
+      }
+      const { notifications } = await api("/notifications");
+      renderNotifications(notifications);
+    }
+
     async function refreshNotifications() {
       try {
-        const { notifications } = await api("/notifications");
-        renderNotifications(notifications);
+        await loadNotifications();
       } catch (err) {
         showStatus(`Failed to load notifications: ${err.message}`, "error");
       }
@@ -750,11 +744,8 @@
           const payload = JSON.parse(event.data);
           if (payload.type === "leaderboard" && payload.leaders) {
             renderLeaderboard(payload.leaders);
-          } else if (payload.type === "notifications" && payload.notifications) {
-            renderNotifications(payload.notifications);
-          } else if (payload.type === "notification" && payload.notification) {
-            const updated = [payload.notification, ...state.notifications].slice(0, 50);
-            renderNotifications(updated);
+          } else if (payload.type === "notifications_changed") {
+            loadNotifications().catch(() => {});
           }
         } catch (err) {
           console.error("Invalid WS payload", err);
@@ -806,6 +797,7 @@
         form.reset();
         await refreshMe();
         await refreshTarget();
+        await refreshNotifications();
       } catch (err) {
         showStatus(`Registration failed: ${err.message}`, "error");
       }
@@ -835,6 +827,7 @@
         form.reset();
         await refreshMe();
         await refreshTarget();
+        await refreshNotifications();
       } catch (err) {
         showStatus(`Login failed: ${err.message}`, "error");
       }
@@ -842,22 +835,14 @@
 
     async function handleTag() {
       if (!state.token) return;
-      const messageInput = document.getElementById("tag-message");
-      const message = messageInput.value.trim();
-      if (message.length > 280) {
-        showStatus("Message must be 280 characters or less.", "error");
-        return;
-      }
-      const body = message ? { message } : {};
       try {
-        const res = await api("/tag", { method: "POST", body });
+        const res = await api("/tag", { method: "POST" });
         document.getElementById("player-score").textContent = res.score;
         document.getElementById("target-name").textContent = res.new_target || "No target assigned.";
         if (res.notification) {
           const updated = [res.notification, ...state.notifications].slice(0, 50);
           renderNotifications(updated);
         }
-        messageInput.value = "";
         if (typeof res.cooldown_seconds === "number") {
           setCooldown(res.cooldown_seconds);
         }
@@ -952,6 +937,24 @@
       }
     }
 
+    async function handleAnnounce(event) {
+      event.preventDefault();
+      const input = document.getElementById("announce-message");
+      const message = input.value.trim();
+      if (!message) {
+        showStatus("Write a message first.", "error");
+        return;
+      }
+      try {
+        await api("/admin/announce", { method: "POST", body: { message } });
+        input.value = "";
+        showStatus("Announcement sent to all players.", "success");
+        await refreshNotifications();
+      } catch (err) {
+        showStatus(`Failed to send announcement: ${err.message}`, "error");
+      }
+    }
+
     async function handleLoadMapping() {
       try {
         const res = await api("/admin/mapping");
@@ -967,7 +970,6 @@
       toggleSections(false);
       document.getElementById("target-name").textContent = "No target yet.";
       renderNotifications([]);
-      document.getElementById("tag-message").value = "";
       document.getElementById("player-name").textContent = "";
       document.getElementById("player-handle").textContent = "";
       const avatarInput = document.getElementById("avatar-input");
@@ -993,6 +995,7 @@
       document.getElementById("tag-btn").addEventListener("click", handleTag);
       document.getElementById("refresh-notifications").addEventListener("click", refreshNotifications);
       document.getElementById("init-form").addEventListener("submit", handleInit);
+      document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("load-mapping").addEventListener("click", handleLoadMapping);
       document.getElementById("refresh-leaderboard").addEventListener("click", refreshLeaderboard);
       document.getElementById("logout-btn").addEventListener("click", () => logout(true));

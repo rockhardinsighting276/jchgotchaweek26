@@ -1,7 +1,7 @@
 import secrets, random
 from datetime import datetime
 from sqlalchemy.orm import Session
-from models import Player
+from models import Player, Notification
 
 TOKEN_LEN = 24
 
@@ -47,45 +47,72 @@ def init_circle(db: Session, names: list[str], shuffle=True):
 
 
 
+def ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def do_tag(db: Session, tagger: Player):
     if not tagger.active:
         raise ValueError("Tagger inactive")
     if tagger.target_id is None:
         raise ValueError("No target available (game likely ended)")
 
-
     target = db.get(Player, tagger.target_id)
     if not target or not target.active:
         raise ValueError("Target invalid or inactive")
 
+    # Players alive before this elimination (admins never play). Counted up front:
+    # autoflush is off, so nothing is visible to queries until commit. The target
+    # finishes in this position (10 alive -> 10th), and 1 left means a winner.
+    alive_before = (
+        db.query(Player)
+        .filter(Player.active == True, Player.is_admin == False)
+        .count()
+    )
+    remaining = alive_before - 1
 
     # next target after the eliminated player
     next_after_target = db.get(Player, target.target_id) if target.target_id else None
 
-
-    # Update tagger
     tagger.score += 1
-    tagger.target_id = next_after_target.id if next_after_target and next_after_target.id != tagger.id else None
+    if remaining <= 1 or next_after_target is None or next_after_target.id == tagger.id:
+        tagger.target_id = None
+    else:
+        tagger.target_id = next_after_target.id
 
-
-    # Eliminate target
     target.active = False
     target.target_id = None
-
-    # Check if only one active remains
-    active_count = db.query(Player).filter_by(active=True).count()
-    if active_count <= 1:
-        # Last player has no target
-        only = db.query(Player).filter_by(active=True).first()
-        if only:
-            only.target_id = None
-
 
     now = datetime.utcnow()
     tagger.last_tag_at = now
     tagger.score_last_updated = now
 
+    new_target = db.get(Player, tagger.target_id) if tagger.target_id else None
+
+    if remaining <= 1:
+        tag_msg = f"You have tagged '{target.name}'. No players remain, you finished 1st!"
+    elif new_target:
+        tag_msg = f"You have tagged '{target.name}', your next target is '{new_target.name}'."
+    else:
+        tag_msg = f"You have tagged '{target.name}'."
+    tagged_msg = f"You have been tagged by '{tagger.name}', you finished {ordinal(alive_before)}."
+
+    tag_note = Notification(
+        kind="tag", recipient_id=tagger.id, tagger_id=tagger.id,
+        target_name=target.name, message=tag_msg, created_at=now,
+    )
+    db.add(tag_note)
+    db.add(Notification(
+        kind="tagged", recipient_id=target.id, tagger_id=tagger.id,
+        message=tagged_msg, created_at=now,
+    ))
+
     db.commit()
     db.refresh(tagger)
     db.refresh(target)
-    return tagger, next_after_target, target
+    db.refresh(tag_note)
+    return tagger, new_target, target, tag_note
