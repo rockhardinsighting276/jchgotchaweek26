@@ -2,14 +2,14 @@ from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocke
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import os
 import uuid
 from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn
 from game import init_circle, do_tag, mint_token
 
 app = FastAPI()
@@ -107,22 +107,15 @@ class Hub:
 hub = Hub()
 
 
+async def notify_changed():
+    # Content-free ping: each client re-fetches only what it is allowed to see.
+    await hub.broadcast({"type": "changed"})
+
+
 @app.websocket("/ws/leaderboard")
 async def ws_leaderboard(ws: WebSocket):
     await hub.add(ws)
     try:
-        db = SessionLocal()
-        try:
-            leaders = [
-                p.public()
-                for p in db.query(Player)
-                .filter(Player.is_admin == False)
-                .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-                .all()
-            ]
-        finally:
-            db.close()
-        await ws.send_json({"type": "leaderboard", "leaders": leaders})
         while True:
             await ws.receive_text() # keepalive; client sends pings
     except WebSocketDisconnect:
@@ -135,8 +128,19 @@ def root():
 
 
 # --- Public / Auth routes ---
+@app.get("/setup")
+def setup_status(db: Session = Depends(get_db)):
+    has_admin = db.query(Player).filter(Player.is_admin == True).first() is not None
+    return {"needs_admin": not has_admin}
+
+
 @app.post("/register")
 def register(body: RegisterIn, db: Session = Depends(get_db)):
+    # Public registration only exists to create the very first admin.
+    if db.query(Player).filter(Player.is_admin == True).first():
+        raise HTTPException(403, "Registration is closed. Ask an admin to create your account.")
+    if not body.admin_secret or body.admin_secret != ADMIN_SECRET:
+        raise HTTPException(403, "Admin secret required to create the first admin")
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Name is required")
@@ -240,14 +244,7 @@ async def update_nickname(body: NicknameIn, p: Player = Depends(auth_player), db
     p.nickname = nickname or None
     db.commit()
     db.refresh(p)
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
     return {"nickname": p.nickname}
 
 
@@ -289,14 +286,7 @@ async def upload_avatar(
     db.commit()
     db.refresh(p)
 
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
 
     return {"avatar_url": p.avatar_url()}
 
@@ -316,16 +306,7 @@ async def tag(
         tagger, new_target, eliminated, note = do_tag(db, p)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
-    # Content-free ping: clients re-fetch their own private notifications.
-    await hub.broadcast({"type": "notifications_changed"})
+    await notify_changed()
     return {
         "ok": True,
         "new_target": (new_target.name if new_target else None),
@@ -336,28 +317,38 @@ async def tag(
 
 
 @app.get("/leaderboard")
-def leaderboard(db: Session = Depends(get_db)):
-    leaders = [
-        p.public()
-        for p in db.query(Player)
+def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    players = (
+        db.query(Player)
         .filter(Player.is_admin == False)
         .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
         .all()
-    ]
+    )
+    names = {pl.id: pl.name for pl in players}
+    leaders = []
+    for pl in players:
+        row = pl.public()
+        row["target"] = names.get(pl.target_id) if pl.active else None
+        leaders.append(row)
     return {"leaders": leaders}
 
 
 @app.get("/notifications")
 def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
-    # Only global announcements and notifications addressed to this player.
-    notes = (
+    q = (
         db.query(Notification)
-        .filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
-        .order_by(Notification.created_at.desc(), Notification.id.desc())
-        .limit(50)
-        .all()
+        .options(joinedload(Notification.recipient))
+        .filter(Notification.kind.isnot(None))
     )
-    return {"notifications": [n.public() for n in notes]}
+    if p.is_admin:
+        limit = 300  # admins oversee every notification
+    else:
+        q = q.filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
+        limit = 50
+    notes = q.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(limit).all()
+    return {"notifications": [n.public(include_recipient=p.is_admin) for n in notes]}
 
 # --- Admin ---
 @app.post("/admin/init")
@@ -375,27 +366,33 @@ async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session
         init_circle(db, cleaned, shuffle=body.shuffle)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
     return {"ok": True}
 
 
-@app.get("/admin/mapping")
-def admin_mapping(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+@app.post("/admin/users")
+def admin_create_user(body: CreateUserIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
-    
-    res = []
-    for pl in db.query(Player).order_by(Player.id).all():
-        tgt = db.get(Player, pl.target_id) if pl.target_id else None
-        res.append({"player": pl.name, "active": pl.active, "target": (tgt.name if tgt else None), "score": pl.score})
-    return {"mapping": res}
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    if len(body.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters long")
+    if len(body.password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(400, "Password too long; must be 72 bytes or fewer")
+    if db.query(Player).filter_by(name=name).first():
+        raise HTTPException(409, "An account with that name already exists")
+    player = Player(
+        name=name,
+        token=mint_token(),
+        is_admin=body.is_admin,
+        password_hash=hash_password(body.password),
+        score_last_updated=datetime.utcnow(),
+    )
+    db.add(player)
+    db.commit()
+    return {"ok": True, "name": player.name, "is_admin": player.is_admin}
 
 
 @app.post("/admin/announce")
@@ -411,5 +408,5 @@ async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db:
     db.add(note)
     db.commit()
     db.refresh(note)
-    await hub.broadcast({"type": "notifications_changed"})
+    await notify_changed()
     return {"ok": True, "notification": note.public()}

@@ -32,3 +32,9 @@ class NicknameIn(BaseModel):
 
 class AnnounceIn(BaseModel):
     message: str
+
+
+class CreateUserIn(BaseModel):
+    name: str
+    password: str
+    is_admin: bool = False

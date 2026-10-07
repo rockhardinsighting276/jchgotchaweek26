@@ -83,6 +83,7 @@
     [data-theme="dark"] .theme-toggle .sun { display: block; }
     [data-theme="dark"] .theme-toggle .moon { display: none; }
     .grid { display: grid; gap: 1.5rem; }
+    #auth-section:not(.two) { max-width: 420px; margin: 0 auto; }
     @media (min-width: 768px) {
       .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -152,7 +153,7 @@
       100% { opacity: 0; transform: translateX(calc(var(--bolt-x) * 0.6)) scaleY(0.3) skewX(calc(var(--bolt-skew) * 0.5)); }
     }
     label { display: block; font-size: 0.9rem; margin-bottom: 0.35rem; }
-    input, textarea, button {
+    input, textarea, button, select {
       width: 100%;
       box-sizing: border-box;
       border-radius: 8px;
@@ -162,7 +163,7 @@
       font-family: inherit;
       margin-bottom: 0.75rem;
     }
-    input, textarea { background: var(--surface-2); color: var(--text); }
+    input, textarea, select { background: var(--surface-2); color: var(--text); }
     input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
     input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
     textarea { min-height: 120px; resize: vertical; }
@@ -213,17 +214,18 @@
     <div id="status" class="status hidden"></div>
     <div id="zap-layer" class="zap-layer"></div>
 
-    <section id="auth-section" class="grid two">
-      <div class="card">
-        <h2>Register</h2>
+    <section id="auth-section" class="grid">
+      <div class="card hidden" id="register-card">
+        <h2>Create the first admin</h2>
+        <p class="muted">Registration closes once an admin exists. After that, admins create accounts from the Register tab.</p>
         <form id="register-form">
           <label for="register-name">Name</label>
           <input id="register-name" name="name" placeholder="Player name" required>
           <label for="register-password">Password <span class="muted">(6-72 chars)</span></label>
           <input id="register-password" name="password" type="password" placeholder="Choose a password" minlength="6" maxlength="72" required>
-          <label for="register-secret">Admin Secret <span class="muted">(optional)</span></label>
-          <input id="register-secret" name="admin_secret" placeholder="Admin secret if you are an admin">
-          <button type="submit">Register</button>
+          <label for="register-secret">Admin secret</label>
+          <input id="register-secret" name="admin_secret" placeholder="ADMIN_SECRET from the server" required>
+          <button type="submit">Create admin</button>
         </form>
       </div>
       <div class="card">
@@ -240,9 +242,11 @@
 
     <section id="game-section" class="hidden">
       <nav class="nav-tabs">
-        <button type="button" class="tab active" data-page="tag">Tag</button>
-        <button type="button" class="tab" data-page="leaderboard">Leaderboard</button>
+        <button type="button" class="tab active" data-page="tag" data-role="player">Tag</button>
+        <button type="button" class="tab" data-page="leaderboard" data-role="admin">Leaderboard</button>
         <button type="button" class="tab" data-page="notifications">Notifications</button>
+        <button type="button" class="tab" data-page="register" data-role="admin">Register</button>
+        <button type="button" id="logout-btn" class="secondary" style="margin: 0 0 0.4rem auto; width: auto; padding: 0.4rem 0.9rem;">Log out</button>
       </nav>
 
       <div id="page-tag" class="page">
@@ -266,7 +270,6 @@
               <input id="nickname-input" placeholder="Enter nickname" maxlength="40">
               <button type="button" id="save-nickname-btn">Save Nickname</button>
             </div>
-            <button type="button" id="logout-btn" class="secondary" style="margin-top: 1rem; max-width: 160px;">Logout</button>
           </div>
 
           <div class="card">
@@ -280,75 +283,81 @@
             </div>
           </div>
 
-          <div id="admin-panel" class="card admin-only hidden">
-            <div class="flex" style="justify-content: space-between;">
-              <h2 style="margin: 0;">Admin Controls <span class="pill">Admin</span></h2>
-              <button type="button" id="load-mapping" class="secondary" style="max-width: 150px;">View Current Mapping</button>
-            </div>
-            <form id="init-form">
-              <label for="init-names">Players (one per line)</label>
-              <textarea id="init-names" placeholder="Alice&#10;Bob&#10;Charlie"></textarea>
-              <div class="flex">
-                <label class="flex" style="gap: 0.35rem; margin: 0;">
-                  <input type="checkbox" id="init-shuffle" checked>
-                  Shuffle order
-                </label>
-                <span class="muted">Requires at least 2 names.</span>
-              </div>
-              <button type="submit" class="danger">Start / Reset Game</button>
-            </form>
-            <form id="announce-form" style="margin-top: 1.5rem;">
-              <label for="announce-message">Announcement to all players</label>
-              <textarea id="announce-message" maxlength="1000" placeholder="Rule changes, schedule updates, reminders (max 1000 characters)"></textarea>
-              <button type="submit">Send announcement</button>
-            </form>
-            <div id="mapping-view" class="hidden">
-              <h3 style="margin-bottom: 0.5rem;">Target Mapping</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Player</th>
-                    <th>Active</th>
-                    <th>Target</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody id="mapping-body"></tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
 
       <div id="page-leaderboard" class="page hidden">
-        <div class="card">
-          <div class="flex" style="justify-content: space-between;">
-            <h2 style="margin: 0;">Leaderboard</h2>
-            <button type="button" id="refresh-leaderboard" class="secondary" style="max-width: 140px;">Refresh</button>
+        <div class="grid">
+          <div class="card">
+            <div class="flex" style="justify-content: space-between;">
+              <h2 style="margin: 0;">Leaderboard</h2>
+              <button type="button" id="refresh-leaderboard" class="secondary" style="max-width: 140px;">Refresh</button>
+            </div>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Target</th></tr>
+                </thead>
+                <tbody id="leaderboard-body"></tbody>
+              </table>
+            </div>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Player</th>
-                <th>Score</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="leaderboard-body">
-            </tbody>
-          </table>
+          <div class="card">
+            <h2 style="margin-top: 0;">Start / reset game</h2>
+            <form id="init-form">
+              <label for="init-names">Players (one per line)</label>
+              <textarea id="init-names" placeholder="Alice&#10;Bob&#10;Charlie"></textarea>
+              <div class="flex" style="margin-bottom: 0.75rem;">
+                <label class="flex" style="gap: 0.35rem; margin: 0;">
+                  <input type="checkbox" id="init-shuffle" checked>
+                  Shuffle order
+                </label>
+                <span class="muted">Requires at least 2 registered players.</span>
+              </div>
+              <button type="submit" class="danger">Start / Reset Game</button>
+            </form>
+          </div>
         </div>
       </div>
 
       <div id="page-notifications" class="page hidden">
+        <div id="announce-card" class="card admin-only hidden" style="margin-bottom: 1.5rem;">
+          <h2 style="margin-top: 0;">Send announcement</h2>
+          <p class="muted">Every player sees it in their Notifications tab.</p>
+          <form id="announce-form">
+            <label for="announce-message">Message</label>
+            <textarea id="announce-message" maxlength="1000" placeholder="Rule changes, schedule updates, reminders (max 1000 characters)"></textarea>
+            <button type="submit">Send announcement</button>
+          </form>
+        </div>
         <div class="card">
           <div class="flex" style="justify-content: space-between;">
-            <h2 style="margin: 0;">Notifications</h2>
+            <h2 id="notifications-title" style="margin: 0;">Notifications</h2>
             <button type="button" id="refresh-notifications" class="secondary" style="max-width: 160px;">Refresh</button>
           </div>
           <div id="notifications-empty" class="muted" style="margin-top: 0.75rem;">No notifications yet.</div>
           <ul id="notifications-list" style="list-style: none; padding: 0; margin: 0;"></ul>
+        </div>
+      </div>
+      <div id="page-register" class="page hidden">
+        <div class="card">
+          <h2 style="margin-top: 0;">Create account</h2>
+          <p class="muted">Players log in with the name and password you set here. Share the password with them privately.</p>
+          <form id="create-user-form">
+            <label for="create-name">Name</label>
+            <input id="create-name" placeholder="Player name" autocomplete="off" required>
+            <label for="create-password">Password <span class="muted">(6-72 chars)</span></label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input id="create-password" type="text" minlength="6" maxlength="72" autocomplete="off" required>
+              <button type="button" id="generate-password" class="secondary" style="width: auto; white-space: nowrap;">Generate</button>
+            </div>
+            <label for="create-role">Account type</label>
+            <select id="create-role">
+              <option value="player">Player</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button type="submit">Create account</button>
+          </form>
         </div>
       </div>
     </section>
@@ -391,6 +400,22 @@
       document.getElementById("game-section").classList.toggle("hidden", !loggedIn);
     }
 
+    const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "notifications", "register"] };
+
+    function applyRole(user) {
+      const isAdmin = !!user?.is_admin;
+      document.querySelectorAll(".nav-tabs .tab").forEach((tab) => {
+        const role = tab.dataset.role;
+        tab.classList.toggle("hidden", (role === "admin" && !isAdmin) || (role === "player" && isAdmin));
+      });
+      document.getElementById("announce-card").classList.toggle("hidden", !isAdmin);
+      document.getElementById("notifications-title").textContent = isAdmin ? "All notifications" : "Notifications";
+      if (user) {
+        const allowed = isAdmin ? PAGES.admin : PAGES.player;
+        if (!allowed.includes(state.currentPage)) switchPage(allowed[0]);
+      }
+    }
+
     function setUser(user) {
       state.user = user;
       const displayName = user ? (user.nickname || user.name || "") : "";
@@ -398,8 +423,7 @@
       document.getElementById("player-handle").textContent = user?.name ?? "";
       document.getElementById("player-score").textContent = user?.score ?? 0;
       updateAvatarDisplay(user?.avatar_url);
-      const adminPanel = document.getElementById("admin-panel");
-      adminPanel.classList.toggle("hidden", !user?.is_admin);
+      applyRole(user);
       const nicknameInput = document.getElementById("nickname-input");
       if (nicknameInput) {
         nicknameInput.value = user?.nickname ?? "";
@@ -489,8 +513,8 @@
       if (!leaders.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No players yet.";
+        cell.colSpan = 5;
+        cell.textContent = "No players yet. Create accounts in the Register tab, then start a game.";
         row.appendChild(cell);
         tbody.appendChild(row);
         return;
@@ -508,8 +532,7 @@
         avatar.src = leader.avatar_url || DEFAULT_AVATAR;
         avatar.alt = `${leader.name}'s avatar`;
         const nameText = document.createElement("span");
-        const displayName = leader.nickname || leader.name;
-        nameText.textContent = displayName;
+        nameText.textContent = leader.nickname || leader.name;
         nameWrap.append(avatar, nameText);
         if (leader.nickname) {
           const handle = document.createElement("span");
@@ -523,30 +546,11 @@
         const status = document.createElement("td");
         status.textContent = leader.active ? "Active" : "Out";
         status.style.fontWeight = leader.active ? "600" : "400";
-        row.append(rank, name, score, status);
+        const target = document.createElement("td");
+        target.textContent = leader.active && leader.target ? leader.target : "-";
+        row.append(rank, name, score, status, target);
         tbody.appendChild(row);
       });
-    }
-
-    function renderMapping(mapping) {
-      const wrapper = document.getElementById("mapping-view");
-      const tbody = document.getElementById("mapping-body");
-      if (!mapping.length) {
-        tbody.innerHTML = "<tr><td colspan='4'>No mapping available.</td></tr>";
-      } else {
-        tbody.innerHTML = "";
-        mapping.forEach(item => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${item.player}</td>
-            <td>${item.active ? "Yes" : "No"}</td>
-            <td>${item.target ?? "-"}</td>
-            <td>${item.score}</td>
-          `;
-          tbody.appendChild(row);
-        });
-      }
-      wrapper.classList.remove("hidden");
     }
 
     function renderNotifications(list) {
@@ -569,6 +573,12 @@
           badge.style.marginLeft = "0";
           badge.textContent = "Announcement";
           li.appendChild(badge);
+        }
+        if (state.user?.is_admin && item.kind !== "global") {
+          const to = document.createElement("div");
+          to.className = "muted";
+          to.textContent = `To ${item.recipient || "unknown"}`;
+          li.appendChild(to);
         }
         const message = document.createElement("div");
         message.style.marginTop = "0.25rem";
@@ -674,7 +684,7 @@
         const me = await api("/me");
         setUser(me);
         toggleSections(true);
-        switchPage(state.currentPage || "tag");
+        if (me.is_admin) await refreshLeaderboard();
       } catch (err) {
         console.warn("Failed to refresh session:", err);
         logout(false);
@@ -682,7 +692,7 @@
     }
 
     async function refreshTarget() {
-      if (!state.token) return;
+      if (!state.token || state.user?.is_admin) return;
       try {
         const res = await api("/target");
         const tgt = document.getElementById("target-name");
@@ -696,12 +706,27 @@
       }
     }
 
+    async function loadLeaderboard() {
+      if (!state.user?.is_admin) return;
+      const { leaders } = await api("/leaderboard");
+      renderLeaderboard(leaders);
+    }
+
     async function refreshLeaderboard() {
       try {
-        const { leaders } = await api("/leaderboard");
-        renderLeaderboard(leaders);
+        await loadLeaderboard();
       } catch (err) {
         showStatus(`Failed to load leaderboard: ${err.message}`, "error");
+      }
+    }
+
+    async function loadSetup() {
+      try {
+        const { needs_admin } = await api("/setup");
+        document.getElementById("register-card").classList.toggle("hidden", !needs_admin);
+        document.getElementById("auth-section").classList.toggle("two", needs_admin);
+      } catch (err) {
+        // keep the login-only layout
       }
     }
 
@@ -742,10 +767,9 @@
       ws.addEventListener("message", (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "leaderboard" && payload.leaders) {
-            renderLeaderboard(payload.leaders);
-          } else if (payload.type === "notifications_changed") {
+          if (payload.type === "changed") {
             loadNotifications().catch(() => {});
+            loadLeaderboard().catch(() => {});
           }
         } catch (err) {
           console.error("Invalid WS payload", err);
@@ -793,7 +817,8 @@
       try {
         const res = await api("/register", { method: "POST", body: data });
         persistToken(res.token);
-        showStatus("Registered successfully!", "success");
+        showStatus("Admin account created.", "success");
+        loadSetup();
         form.reset();
         await refreshMe();
         await refreshTarget();
@@ -929,8 +954,6 @@
           body: { players: namesRaw, shuffle },
         });
         showStatus("Game initialized!", "success");
-        document.getElementById("mapping-view").classList.add("hidden");
-        await refreshTarget();
         await refreshLeaderboard();
       } catch (err) {
         showStatus(`Failed to initialize: ${err.message}`, "error");
@@ -955,12 +978,32 @@
       }
     }
 
-    async function handleLoadMapping() {
+    function randomPassword(len = 10) {
+      const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bytes = new Uint32Array(len);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+    }
+
+    async function handleCreateUser(event) {
+      event.preventDefault();
+      const name = document.getElementById("create-name").value.trim();
+      const password = document.getElementById("create-password").value;
+      const isAdmin = document.getElementById("create-role").value === "admin";
+      if (!name) {
+        showStatus("Name is required", "error");
+        return;
+      }
+      if (password.length < 6 || password.length > 72) {
+        showStatus("Password must be 6-72 characters.", "error");
+        return;
+      }
       try {
-        const res = await api("/admin/mapping");
-        renderMapping(res.mapping);
+        await api("/admin/users", { method: "POST", body: { name, password, is_admin: isAdmin } });
+        showStatus(`Created ${isAdmin ? "admin" : "player"} '${name}'. Password: ${password}`, "success");
+        event.target.reset();
       } catch (err) {
-        showStatus(`Failed to load mapping: ${err.message}`, "error");
+        showStatus(`Failed to create account: ${err.message}`, "error");
       }
     }
 
@@ -996,7 +1039,10 @@
       document.getElementById("refresh-notifications").addEventListener("click", refreshNotifications);
       document.getElementById("init-form").addEventListener("submit", handleInit);
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
-      document.getElementById("load-mapping").addEventListener("click", handleLoadMapping);
+      document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
+      document.getElementById("generate-password").addEventListener("click", () => {
+        document.getElementById("create-password").value = randomPassword();
+      });
       document.getElementById("refresh-leaderboard").addEventListener("click", refreshLeaderboard);
       document.getElementById("logout-btn").addEventListener("click", () => logout(true));
       document.getElementById("upload-avatar-btn").addEventListener("click", handleAvatarUpload);
@@ -1011,7 +1057,7 @@
         refreshMe().then(refreshTarget);
       }
       switchPage("tag");
-      refreshLeaderboard();
+      loadSetup();
       refreshNotifications();
       connectLeaderboardSocket();
     }

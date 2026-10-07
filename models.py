@@ -90,14 +90,17 @@ class Notification(Base):
     tagger = relationship("Player", foreign_keys=[tagger_id])
     recipient = relationship("Player", foreign_keys=[recipient_id])
 
-    def public(self):
-        return {
+    def public(self, include_recipient=False):
+        data = {
             "id": self.id,
             "kind": self.kind,
             "message": self.message,
             "target": self.target_name,
             "created_at": self.created_at.isoformat() + "Z",
         }
+        if include_recipient:
+            data["recipient"] = self.recipient.name if self.recipient else None
+        return data
 
 
 Base.metadata.create_all(bind=engine)
