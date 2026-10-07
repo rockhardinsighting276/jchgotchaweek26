@@ -449,13 +449,8 @@
       document.querySelectorAll(".nav-tabs .tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.page === page);
       });
-      const pages = {
-        tag: document.getElementById("page-tag"),
-        leaderboard: document.getElementById("page-leaderboard"),
-        notifications: document.getElementById("page-notifications"),
-      };
-      Object.entries(pages).forEach(([name, el]) => {
-        el.classList.toggle("hidden", name !== page);
+      document.querySelectorAll(".page").forEach((el) => {
+        el.classList.toggle("hidden", el.id !== `page-${page}`);
       });
     }
 
