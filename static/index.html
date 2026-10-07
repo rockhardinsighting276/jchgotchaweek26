@@ -195,6 +195,11 @@
       display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px;
       background: var(--accent); color: var(--accent-ink); font-size: 0.8rem; margin-left: 0.5rem;
     }
+    .badge {
+      display: inline-block; min-width: 1.25rem; padding: 0 0.4rem; margin-left: 0.4rem;
+      border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+      font-size: 0.75rem; font-weight: 700; line-height: 1.25rem; text-align: center;
+    }
     #target-name { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.01em; color: var(--accent); }
     .muted { color: var(--muted); font-size: 0.9rem; }
     .admin-only { border: 1px dashed var(--accent); }
@@ -244,7 +249,8 @@
       <nav class="nav-tabs">
         <button type="button" class="tab active" data-page="tag" data-role="player">Tag</button>
         <button type="button" class="tab" data-page="leaderboard" data-role="admin">Leaderboard</button>
-        <button type="button" class="tab" data-page="notifications">Notifications</button>
+        <button type="button" class="tab" data-page="game" data-role="admin">Game</button>
+        <button type="button" class="tab" data-page="notifications">Notifications<span id="notif-badge" class="badge hidden"></span></button>
         <button type="button" class="tab" data-page="register" data-role="admin">Register</button>
         <button type="button" id="logout-btn" class="secondary" style="margin: 0 0 0.4rem auto; width: auto; padding: 0.4rem 0.9rem;">Log out</button>
       </nav>
@@ -258,6 +264,7 @@
                 <h2 style="margin: 0;">Welcome, <span id="player-name"></span></h2>
                 <div class="muted">Account name: <span id="player-handle"></span></div>
                 <div class="muted">Score: <span id="player-score">0</span></div>
+                <div class="muted">Status: <span id="player-status"></span></div>
               </div>
             </div>
             <div class="upload-controls">
@@ -287,34 +294,50 @@
       </div>
 
       <div id="page-leaderboard" class="page hidden">
+        <div class="card">
+          <div class="flex" style="justify-content: space-between;">
+            <h2 style="margin: 0;">Leaderboard</h2>
+            <button type="button" id="refresh-leaderboard" class="secondary" style="max-width: 140px;">Refresh</button>
+          </div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Target</th></tr>
+              </thead>
+              <tbody id="leaderboard-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="page-game" class="page hidden">
         <div class="grid">
           <div class="card">
-            <div class="flex" style="justify-content: space-between;">
-              <h2 style="margin: 0;">Leaderboard</h2>
-              <button type="button" id="refresh-leaderboard" class="secondary" style="max-width: 140px;">Refresh</button>
-            </div>
-            <div style="overflow-x: auto;">
-              <table>
-                <thead>
-                  <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Target</th></tr>
-                </thead>
-                <tbody id="leaderboard-body"></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="card">
             <h2 style="margin-top: 0;">Start / reset game</h2>
+            <p class="muted">Starts a new game with every non-admin player in one circle and resets all scores. Each player is told their first target.</p>
             <form id="init-form">
-              <label for="init-names">Players (one per line)</label>
-              <textarea id="init-names" placeholder="Alice&#10;Bob&#10;Charlie"></textarea>
               <div class="flex" style="margin-bottom: 0.75rem;">
                 <label class="flex" style="gap: 0.35rem; margin: 0;">
                   <input type="checkbox" id="init-shuffle" checked>
                   Shuffle order
                 </label>
-                <span class="muted">Requires at least 2 registered players.</span>
+                <span class="muted" id="init-count"></span>
               </div>
               <button type="submit" class="danger">Start / Reset Game</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2 style="margin-top: 0;">Inactive players</h2>
+            <p class="muted">Players who are not in the current game, such as accounts added after it started. Pick the player they will become the target of. They then take over that player's old target, so the loop stays intact. Only those two players are notified.</p>
+            <div id="inactive-list"></div>
+          </div>
+          <div class="card" style="border-color: var(--danger);">
+            <h2 style="margin-top: 0;">Danger zone</h2>
+            <p class="muted">Wipes every account (including yours), all notifications and uploaded avatars. You will be logged out and first-admin setup will appear again.</p>
+            <form id="wipe-form">
+              <label for="wipe-secret">Admin secret</label>
+              <input id="wipe-secret" type="password" autocomplete="off" required>
+              <button type="submit" class="danger">Wipe database</button>
             </form>
           </div>
         </div>
@@ -373,6 +396,8 @@
       wsTicker: null,
       leaders: [],
       notifications: [],
+      unread: 0,
+      seenId: 0,
       currentPage: "tag",
       cooldownSeconds: 0,
       cooldownTimer: null,
@@ -400,7 +425,9 @@
       document.getElementById("game-section").classList.toggle("hidden", !loggedIn);
     }
 
-    const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "notifications", "register"] };
+    const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "game", "notifications", "register"] };
+    const STATUS_LABELS = { active: "Active", inactive: "Inactive", eliminated: "Eliminated" };
+    const PLAYER_STATUS = { active: "Active", inactive: "Not in the current game", eliminated: "Eliminated" };
 
     function applyRole(user) {
       const isAdmin = !!user?.is_admin;
@@ -422,6 +449,7 @@
       document.getElementById("player-name").textContent = displayName;
       document.getElementById("player-handle").textContent = user?.name ?? "";
       document.getElementById("player-score").textContent = user?.score ?? 0;
+      document.getElementById("player-status").textContent = user ? (PLAYER_STATUS[user.status] || "") : "";
       updateAvatarDisplay(user?.avatar_url);
       applyRole(user);
       const nicknameInput = document.getElementById("nickname-input");
@@ -452,12 +480,19 @@
       document.querySelectorAll(".page").forEach((el) => {
         el.classList.toggle("hidden", el.id !== `page-${page}`);
       });
+      if (page === "notifications") markNotificationsRead();
     }
 
     function updateCooldownDisplay() {
       const label = document.getElementById("tag-cooldown");
       const button = document.getElementById("tag-btn");
       if (!label || !button) return;
+      const inPlay = !state.user || state.user.active !== false;
+      if (!inPlay) {
+        label.textContent = state.user.status === "eliminated" ? "Eliminated" : "Not in the game";
+        button.disabled = true;
+        return;
+      }
       if (state.cooldownSeconds <= 0) {
         label.textContent = "Ready";
         button.disabled = false;
@@ -503,6 +538,7 @@
 
     function renderLeaderboard(leaders) {
       state.leaders = leaders;
+      renderGameTools(leaders);
       const tbody = document.getElementById("leaderboard-body");
       tbody.innerHTML = "";
       if (!leaders.length) {
@@ -539,12 +575,61 @@
         const score = document.createElement("td");
         score.textContent = leader.score;
         const status = document.createElement("td");
-        status.textContent = leader.active ? "Active" : "Out";
-        status.style.fontWeight = leader.active ? "600" : "400";
+        status.textContent = STATUS_LABELS[leader.status] || "Inactive";
+        status.style.fontWeight = leader.status === "active" ? "600" : "400";
         const target = document.createElement("td");
         target.textContent = leader.active && leader.target ? leader.target : "-";
         row.append(rank, name, score, status, target);
         tbody.appendChild(row);
+      });
+    }
+
+    function renderGameTools(leaders) {
+      const active = leaders.filter((l) => l.status === "active");
+      const inactive = leaders.filter((l) => l.status === "inactive");
+      const count = document.getElementById("init-count");
+      count.textContent = `${leaders.length} player${leaders.length === 1 ? "" : "s"} will be included.`;
+      const list = document.getElementById("inactive-list");
+      const previous = {};
+      list.querySelectorAll("select[data-player]").forEach((sel) => { previous[sel.dataset.player] = sel.value; });
+      list.innerHTML = "";
+      if (!inactive.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No inactive players.";
+        list.appendChild(empty);
+        return;
+      }
+      inactive.forEach((player) => {
+        const row = document.createElement("div");
+        row.className = "flex";
+        row.style.padding = "0.5rem 0";
+        row.style.borderBottom = "1px solid var(--border)";
+        const name = document.createElement("strong");
+        name.style.flex = "1 1 8rem";
+        name.textContent = player.nickname ? `${player.nickname} (@${player.name})` : player.name;
+        const select = document.createElement("select");
+        select.dataset.player = player.id;
+        select.style.flex = "2 1 12rem";
+        select.style.margin = "0";
+        select.setAttribute("aria-label", `Make ${player.name} the target of`);
+        active.forEach((a) => {
+          const opt = document.createElement("option");
+          opt.value = a.id;
+          opt.textContent = `Target of ${a.name} (now targets ${a.target || "nobody"})`;
+          select.appendChild(opt);
+        });
+        if (previous[player.id]) select.value = previous[player.id];
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Insert";
+        btn.style.width = "auto";
+        btn.style.margin = "0";
+        btn.disabled = !active.length;
+        btn.title = active.length ? "" : "Start a game first";
+        btn.addEventListener("click", () => handleInsert(player, select.value));
+        row.append(name, select, btn);
+        list.appendChild(row);
       });
     }
 
@@ -562,6 +647,17 @@
         const li = document.createElement("li");
         li.style.padding = "0.75rem 0";
         li.style.borderBottom = "1px solid var(--border)";
+        const isNew = !state.user?.is_admin && item.kind !== "tag" && item.id > state.seenId;
+        if (isNew) {
+          li.style.borderLeft = "3px solid var(--accent)";
+          li.style.paddingLeft = "0.75rem";
+          const fresh = document.createElement("span");
+          fresh.className = "pill";
+          fresh.style.marginLeft = "0";
+          fresh.style.marginRight = "0.5rem";
+          fresh.textContent = "New";
+          li.appendChild(fresh);
+        }
         if (item.kind === "global") {
           const badge = document.createElement("span");
           badge.className = "pill";
@@ -632,6 +728,7 @@
           // ignore json parse errors
         }
         const error = new Error(detail || `Request failed (${res.status})`);
+        error.status = res.status;
         if (typeof cooldownSeconds === "number") {
           error.cooldownSeconds = cooldownSeconds;
         }
@@ -692,7 +789,9 @@
         const res = await api("/target");
         const tgt = document.getElementById("target-name");
         if (!res.target) {
-          tgt.textContent = "No target assigned yet.";
+          const st = state.user?.status;
+          tgt.textContent = st === "eliminated" ? "You have been eliminated."
+            : st === "inactive" ? "You are not in the current game." : "No target assigned yet.";
         } else {
           tgt.textContent = res.target;
         }
@@ -727,11 +826,60 @@
 
     async function loadNotifications() {
       if (!state.token) {
+        state.unread = 0;
         renderNotifications([]);
+        updateBadge();
         return;
       }
-      const { notifications } = await api("/notifications");
-      renderNotifications(notifications);
+      const res = await api("/notifications");
+      state.unread = res.unread || 0;
+      state.seenId = res.seen_id || 0;
+      renderNotifications(res.notifications);
+      updateBadge();
+      if (state.currentPage === "notifications") markNotificationsRead();
+    }
+
+    function updateBadge() {
+      const badge = document.getElementById("notif-badge");
+      const show = !state.user?.is_admin && state.unread > 0;
+      badge.classList.toggle("hidden", !show);
+      badge.textContent = state.unread > 9 ? "9+" : String(state.unread);
+      badge.setAttribute("aria-label", `${state.unread} unread`);
+    }
+
+    async function markNotificationsRead() {
+      if (!state.token || state.user?.is_admin || state.unread === 0 || !state.notifications.length) return;
+      const upTo = Math.max(...state.notifications.map((n) => n.id));
+      try {
+        const res = await api("/notifications/read", { method: "POST", body: { up_to: upTo } });
+        state.seenId = res.seen_id;
+        state.unread = 0;
+        updateBadge();
+      } catch (err) {
+        // try again on the next refresh
+      }
+    }
+
+    function applyMe(me) {
+      state.user = Object.assign({}, state.user, me);
+      document.getElementById("player-score").textContent = me.score ?? 0;
+      document.getElementById("player-status").textContent = PLAYER_STATUS[me.status] || "";
+      if (typeof me.cooldown_seconds === "number") setCooldown(me.cooldown_seconds);
+    }
+
+    async function syncSelf() {
+      if (!state.token) return;
+      try {
+        const me = await api("/me");
+        applyMe(me);
+        if (me.is_admin) {
+          await loadLeaderboard();
+        } else {
+          await refreshTarget();
+        }
+      } catch (err) {
+        if (err.status === 401) logout(false);
+      }
     }
 
     async function refreshNotifications() {
@@ -764,7 +912,7 @@
           const payload = JSON.parse(event.data);
           if (payload.type === "changed") {
             loadNotifications().catch(() => {});
-            loadLeaderboard().catch(() => {});
+            syncSelf();
           }
         } catch (err) {
           console.error("Invalid WS payload", err);
@@ -934,24 +1082,50 @@
 
     async function handleInit(event) {
       event.preventDefault();
-      const namesRaw = document.getElementById("init-names").value
-        .split(/\r?\n/)
-        .map(v => v.trim())
-        .filter(Boolean);
       const shuffle = document.getElementById("init-shuffle").checked;
-      if (namesRaw.length < 2) {
-        showStatus("Need at least two players", "error");
+      const count = state.leaders.length;
+      if (count < 2) {
+        showStatus("Need at least two players. Create accounts in the Register tab first.", "error");
         return;
       }
+      if (!confirm(`Start a new game with ${count} players? This resets every score and target.`)) return;
       try {
-        await api("/admin/init", {
-          method: "POST",
-          body: { players: namesRaw, shuffle },
-        });
-        showStatus("Game initialized!", "success");
+        await api("/admin/init", { method: "POST", body: { shuffle } });
+        showStatus("Game started!", "success");
         await refreshLeaderboard();
       } catch (err) {
-        showStatus(`Failed to initialize: ${err.message}`, "error");
+        showStatus(`Failed to start the game: ${err.message}`, "error");
+      }
+    }
+
+    async function handleInsert(player, afterId) {
+      if (!afterId) return;
+      try {
+        await api("/admin/insert", { method: "POST", body: { player_id: player.id, after_id: Number(afterId) } });
+        showStatus(`${player.name} is now in the game.`, "success");
+        await refreshLeaderboard();
+      } catch (err) {
+        showStatus(`Failed to insert player: ${err.message}`, "error");
+      }
+    }
+
+    async function handleWipe(event) {
+      event.preventDefault();
+      const input = document.getElementById("wipe-secret");
+      const secret = input.value;
+      if (!secret) {
+        showStatus("Enter the admin secret to wipe the database.", "error");
+        return;
+      }
+      if (!confirm("Wipe the database? This deletes every account, notification and avatar, including yours. It cannot be undone.")) return;
+      try {
+        await api("/admin/wipe", { method: "POST", body: { admin_secret: secret } });
+        input.value = "";
+        logout(false);
+        await loadSetup();
+        showStatus("Database wiped. Create a new first admin to start over.", "success");
+      } catch (err) {
+        showStatus(`Wipe failed: ${err.message}`, "error");
       }
     }
 
@@ -1018,6 +1192,9 @@
       if (nicknameInput) {
         nicknameInput.value = "";
       }
+      state.unread = 0;
+      state.seenId = 0;
+      updateBadge();
       renderLeaderboard([]);
       switchPage("tag");
       if (notify) {
@@ -1035,6 +1212,7 @@
       document.getElementById("init-form").addEventListener("submit", handleInit);
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
+      document.getElementById("wipe-form").addEventListener("submit", handleWipe);
       document.getElementById("generate-password").addEventListener("click", () => {
         document.getElementById("create-password").value = randomPassword();
       });

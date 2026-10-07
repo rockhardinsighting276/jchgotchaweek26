@@ -14,7 +14,6 @@ class LoginIn(BaseModel):
 
 
 class InitIn(BaseModel):
-    players: List[str]
     shuffle: bool = True
 
 
@@ -38,3 +37,16 @@ class CreateUserIn(BaseModel):
     name: str
     password: str
     is_admin: bool = False
+
+
+class InsertIn(BaseModel):
+    player_id: int
+    after_id: int
+
+
+class WipeIn(BaseModel):
+    admin_secret: str
+
+
+class ReadIn(BaseModel):
+    up_to: int

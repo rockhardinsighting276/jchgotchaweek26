@@ -1,16 +1,17 @@
 from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 import os
+import re
 import uuid
 from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn
-from game import init_circle, do_tag, mint_token
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn
+from game import init_circle, insert_player, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -221,6 +222,7 @@ def me(p: Player = Depends(auth_player)):
         "name": p.name,
         "score": p.score,
         "active": p.active,
+        "status": p.status(),
         "is_admin": p.is_admin,
         "avatar_url": p.avatar_url(),
         "nickname": p.nickname,
@@ -320,12 +322,9 @@ async def tag(
 def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
-    players = (
-        db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    )
+    players = db.query(Player).filter(Player.is_admin == False).all()
+    order = {"active": 0, "eliminated": 1, "inactive": 2}
+    players.sort(key=lambda pl: (order[pl.status()], -(pl.score or 0), pl.score_last_updated or datetime.min, pl.id))
     names = {pl.id: pl.name for pl in players}
     leaders = []
     for pl in players:
@@ -335,35 +334,68 @@ def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db))
     return {"leaders": leaders}
 
 
+def visible_notes(db: Session, p: Player):
+    q = db.query(Notification).filter(Notification.kind.isnot(None))
+    if not p.is_admin:
+        q = q.filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
+    return q
+
+
 @app.get("/notifications")
 def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
-    q = (
-        db.query(Notification)
+    limit = 300 if p.is_admin else 50  # admins oversee every notification
+    notes = (
+        visible_notes(db, p)
         .options(joinedload(Notification.recipient))
-        .filter(Notification.kind.isnot(None))
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(limit)
+        .all()
     )
-    if p.is_admin:
-        limit = 300  # admins oversee every notification
-    else:
-        q = q.filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
-        limit = 50
-    notes = q.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(limit).all()
-    return {"notifications": [n.public(include_recipient=p.is_admin) for n in notes]}
+    seen = p.notif_seen_id or 0
+    unread = 0
+    if not p.is_admin:
+        # a player's own "you tagged X" confirmation never counts as unread
+        unread = visible_notes(db, p).filter(Notification.id > seen, Notification.kind != "tag").count()
+    return {
+        "notifications": [n.public(include_recipient=p.is_admin) for n in notes],
+        "unread": unread,
+        "seen_id": seen,
+    }
+
+
+@app.post("/notifications/read")
+def mark_notifications_read(body: ReadIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    latest = db.query(func.max(Notification.id)).scalar() or 0
+    up_to = min(body.up_to, latest)
+    if up_to > (p.notif_seen_id or 0):
+        p.notif_seen_id = up_to
+        db.commit()
+    return {"ok": True, "seen_id": p.notif_seen_id or 0}
+
 
 # --- Admin ---
 @app.post("/admin/init")
 async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
-    if len(body.players) < 2:
-        raise HTTPException(400, "Need at least 2 players")
-    cleaned = [name.strip() for name in body.players if name.strip()]
-    if len(cleaned) < 2:
-        raise HTTPException(400, "Need at least 2 valid player names")
-    if len(set(cleaned)) != len(cleaned):
-        raise HTTPException(400, "Player names must be unique")
     try:
-        init_circle(db, cleaned, shuffle=body.shuffle)
+        init_circle(db, p, shuffle=body.shuffle)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.post("/admin/insert")
+async def admin_insert(body: InsertIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    newcomer = db.get(Player, body.player_id)
+    anchor = db.get(Player, body.after_id)
+    if not newcomer or not anchor:
+        raise HTTPException(404, "Player not found")
+    try:
+        insert_player(db, p, newcomer, anchor)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     await notify_changed()
@@ -387,6 +419,7 @@ def admin_create_user(body: CreateUserIn, p: Player = Depends(auth_player), db: 
         name=name,
         token=mint_token(),
         is_admin=body.is_admin,
+        active=False,  # accounts start out of the game until an admin starts it or inserts them
         password_hash=hash_password(body.password),
         score_last_updated=datetime.utcnow(),
     )
@@ -410,3 +443,26 @@ async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db:
     db.refresh(note)
     await notify_changed()
     return {"ok": True, "notification": note.public()}
+
+
+AVATAR_FILE = re.compile(r"^\d+_[0-9a-f]{32}\.[a-z]+$")
+
+
+@app.post("/admin/wipe")
+async def admin_wipe(body: WipeIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    if not body.admin_secret or body.admin_secret != ADMIN_SECRET:
+        raise HTTPException(403, "Incorrect admin secret")
+    db.query(Notification).delete()
+    db.query(Player).update({Player.target_id: None})
+    db.query(Player).delete()
+    db.commit()
+    for f in AVATAR_DIR.iterdir():
+        if f.is_file() and AVATAR_FILE.match(f.name):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    await notify_changed()
+    return {"ok": True}

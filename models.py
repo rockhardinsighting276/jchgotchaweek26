@@ -31,6 +31,8 @@ class Player(Base):
     nickname = Column(String, nullable=True)
     last_tag_at = Column(DateTime, nullable=True)
     score_last_updated = Column(DateTime, nullable=True)
+    eliminated = Column(Boolean, default=False)      # tagged out of the game
+    notif_seen_id = Column(Integer, default=0)       # newest notification id this player has read
 
     def public(self):
         return {
@@ -38,9 +40,16 @@ class Player(Base):
             "name": self.name,
             "score": self.score,
             "active": self.active,
+            "status": self.status(),
             "nickname": self.nickname,
             "avatar_url": self.avatar_url(),
         }
+
+    def status(self):
+        # active = in play; eliminated = tagged out; inactive = not in the current game
+        if self.active:
+            return "active"
+        return "eliminated" if self.eliminated else "inactive"
 
     def avatar_url(self):
         if not self.avatar_path:
@@ -116,3 +125,22 @@ def ensure_notification_columns():
 
 
 ensure_notification_columns()
+
+
+def ensure_game_columns():
+    cols = {col["name"] for col in inspect(engine).get_columns("players")}
+    with engine.begin() as conn:
+        if "eliminated" not in cols:
+            conn.execute(text("ALTER TABLE players ADD COLUMN eliminated BOOLEAN DEFAULT 0"))
+            # players already knocked out under the old rules received a "tagged" notification
+            conn.execute(text(
+                "UPDATE players SET eliminated = 1 WHERE active = 0 AND id IN "
+                "(SELECT recipient_id FROM notifications WHERE kind = 'tagged')"
+            ))
+        if "notif_seen_id" not in cols:
+            conn.execute(text("ALTER TABLE players ADD COLUMN notif_seen_id INTEGER DEFAULT 0"))
+            # existing players start with everything marked as read
+            conn.execute(text("UPDATE players SET notif_seen_id = (SELECT COALESCE(MAX(id), 0) FROM notifications)"))
+
+
+ensure_game_columns()
