@@ -10,8 +10,8 @@ from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn
-from game import init_circle, insert_player, do_tag, mint_token
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn
+from game import init_circle, insert_player, undo_tag, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -323,15 +323,70 @@ def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db))
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
     players = db.query(Player).filter(Player.is_admin == False).all()
-    order = {"active": 0, "eliminated": 1, "inactive": 2}
-    players.sort(key=lambda pl: (order[pl.status()], -(pl.score or 0), pl.score_last_updated or datetime.min, pl.id))
     names = {pl.id: pl.name for pl in players}
+    active = [pl for pl in players if pl.active]
+    out = [pl for pl in players if pl.status() == "eliminated"]
+    # Placement = 1 + the number of players who outlasted you (still active, or eliminated later).
+    # Worked out from elimination order, so late inserts and undone tags shift it correctly.
+    out.sort(key=lambda pl: pl.eliminated_at or datetime.min, reverse=True)
+    placement = {pl.id: len(active) + i + 1 for i, pl in enumerate(out)}
+    if len(active) == 1 and out:
+        placement[active[0].id] = 1  # last one standing
+
+    group = {"active": 0, "eliminated": 1, "inactive": 2}
+
+    def order(pl):
+        g = group[pl.status()]
+        if g == 1:  # eliminated: best placement first
+            return (1, placement[pl.id], 0, 0, pl.id)
+        return (g, 0, -(pl.score or 0), pl.score_last_updated or datetime.min, pl.id)
+
     leaders = []
-    for pl in players:
+    for pl in sorted(players, key=order):
         row = pl.public()
+        gone = pl.status() == "eliminated"
         row["target"] = names.get(pl.target_id) if pl.active else None
+        row["placement"] = placement.get(pl.id)
+        row["tagged_by"] = names.get(pl.eliminated_by_id) if gone else None
+        row["tagged_by_id"] = pl.eliminated_by_id if gone else None
         leaders.append(row)
     return {"leaders": leaders}
+
+
+def group_events(notes):
+    """Admin view: collapse the notes one action produced into a single event.
+
+    Every note of an action shares (created_at, tagger_id): the tagger, or the admin who acted.
+    Announcements stay as they are.
+    """
+    groups = {}
+    for n in notes:
+        key = ("announcement", n.id) if n.kind == "global" else (n.created_at, n.tagger_id)
+        groups.setdefault(key, []).append(n)
+    items = []
+    for grp in groups.values():
+        grp.sort(key=lambda n: n.id)
+        if grp[0].kind == "global":
+            items.append(grp[0].public(include_recipient=True))
+            continue
+        title = next((n.event for n in grp if n.event), None)
+        if title is None:  # rows written before events had titles
+            tag = next((n for n in grp if n.kind == "tag"), None)
+            if tag:
+                title = f"Player Tagged: {tag.recipient.name if tag.recipient else '?'} -> {tag.target_name}"
+            elif len(grp) > 2:
+                title = f"Game Started: {len(grp)} players"
+            else:
+                title = "Update"
+        items.append({
+            "id": grp[-1].id,
+            "kind": "event",
+            "title": title,
+            "created_at": grp[0].created_at.isoformat() + "Z",
+            "lines": [{"recipient": n.recipient.name if n.recipient else None, "message": n.message} for n in grp],
+        })
+    items.sort(key=lambda i: (i["created_at"], i["id"]), reverse=True)
+    return items[:150]
 
 
 def visible_notes(db: Session, p: Player):
@@ -343,7 +398,7 @@ def visible_notes(db: Session, p: Player):
 
 @app.get("/notifications")
 def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
-    limit = 300 if p.is_admin else 50  # admins oversee every notification
+    limit = 1500 if p.is_admin else 50  # admins oversee everything (grouped into events below)
     notes = (
         visible_notes(db, p)
         .options(joinedload(Notification.recipient))
@@ -357,7 +412,7 @@ def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db
         # a player's own "you tagged X" confirmation never counts as unread
         unread = visible_notes(db, p).filter(Notification.id > seen, Notification.kind != "tag").count()
     return {
-        "notifications": [n.public(include_recipient=p.is_admin) for n in notes],
+        "notifications": group_events(notes) if p.is_admin else [n.public() for n in notes],
         "unread": unread,
         "seen_id": seen,
     }
@@ -396,6 +451,22 @@ async def admin_insert(body: InsertIn, p: Player = Depends(auth_player), db: Ses
         raise HTTPException(404, "Player not found")
     try:
         insert_player(db, p, newcomer, anchor)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.post("/admin/undo-tag")
+async def admin_undo_tag(body: UndoIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    player = db.get(Player, body.player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    anchor = db.get(Player, body.after_id) if body.after_id is not None else None
+    try:
+        undo_tag(db, p, player, body.mode, anchor)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     await notify_changed()

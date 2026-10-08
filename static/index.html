@@ -128,30 +128,6 @@
     .nickname-controls { margin-top: 1rem; }
     .player-cell { display: flex; align-items: center; gap: 0.35rem; }
     .small-handle { margin-left: 0.4rem; font-size: 0.8rem; color: var(--muted); }
-    .zap-layer { position: fixed; inset: 0; pointer-events: none; z-index: 999; overflow: hidden; display: none; }
-    .zap-layer.active { display: block; }
-    @media (prefers-reduced-motion: reduce) { .zap-layer.active { display: none; } }
-    .zap-flash {
-      position: absolute; inset: 0;
-      background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 65%);
-      animation: flash 5s ease-out forwards;
-    }
-    .zap-bolt {
-      position: absolute; width: 4px; height: 80vh; top: -20vh; left: 50%;
-      background: linear-gradient(180deg, rgba(255,255,255,0) 0%, #facc15 30%, #f97316 70%, rgba(255,255,255,0) 100%);
-      filter: drop-shadow(0 0 16px rgba(250, 204, 21, 0.8));
-      transform-origin: top;
-      animation: bolt 0.6s ease-out forwards;
-    }
-    @keyframes flash {
-      0% { opacity: 0; } 5% { opacity: 1; } 12% { opacity: 0.3; } 20% { opacity: 0; }
-      40% { opacity: 0.25; } 50% { opacity: 0.05; } 70% { opacity: 0.2; } 100% { opacity: 0; }
-    }
-    @keyframes bolt {
-      0% { opacity: 0; transform: translateX(0) scaleY(0.4) skewX(0deg); }
-      20% { opacity: 1; transform: translateX(var(--bolt-x)) scaleY(1) skewX(var(--bolt-skew)); }
-      100% { opacity: 0; transform: translateX(calc(var(--bolt-x) * 0.6)) scaleY(0.3) skewX(calc(var(--bolt-skew) * 0.5)); }
-    }
     label { display: block; font-size: 0.9rem; margin-bottom: 0.35rem; }
     input, textarea, button, select {
       width: 100%;
@@ -165,7 +141,7 @@
     }
     input, textarea, select { background: var(--surface-2); color: var(--text); }
     input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
-    input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
+    input[type="checkbox"], input[type="radio"] { width: auto; margin: 0; accent-color: var(--accent); }
     textarea { min-height: 120px; resize: vertical; }
     button {
       border: 1px solid transparent;
@@ -217,7 +193,6 @@
     </header>
 
     <div id="status" class="status hidden"></div>
-    <div id="zap-layer" class="zap-layer"></div>
 
     <section id="auth-section" class="grid">
       <div class="card hidden" id="register-card">
@@ -302,7 +277,7 @@
           <div style="overflow-x: auto;">
             <table>
               <thead>
-                <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Target</th></tr>
+                <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Place</th><th>Target</th></tr>
               </thead>
               <tbody id="leaderboard-body"></tbody>
             </table>
@@ -330,6 +305,11 @@
             <h2 style="margin-top: 0;">Inactive players</h2>
             <p class="muted">Players who are not in the current game, such as accounts added after it started. Pick the player they will become the target of. They then take over that player's old target, so the loop stays intact. Only those two players are notified.</p>
             <div id="inactive-list"></div>
+          </div>
+          <div class="card">
+            <h2 style="margin-top: 0;">Undo a tag</h2>
+            <p class="muted">If a dispute is upheld, bring an eliminated player back. The tagger's point is removed. Only the restored player, the player whose target changes and the tagger are notified.</p>
+            <div id="undo-list"></div>
           </div>
           <div class="card" style="border-color: var(--danger);">
             <h2 style="margin-top: 0;">Danger zone</h2>
@@ -397,6 +377,7 @@
       leaders: [],
       notifications: [],
       unread: 0,
+      undo: null,
       seenId: 0,
       currentPage: "tag",
       cooldownSeconds: 0,
@@ -427,6 +408,11 @@
 
     const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "game", "notifications", "register"] };
     const STATUS_LABELS = { active: "Active", inactive: "Inactive", eliminated: "Eliminated" };
+    function ordinal(n) {
+      const v = n % 100;
+      const suffix = v >= 11 && v <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
+      return n + suffix;
+    }
     const PLAYER_STATUS = { active: "Active", inactive: "Not in the current game", eliminated: "Eliminated" };
 
     function applyRole(user) {
@@ -544,7 +530,7 @@
       if (!leaders.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 5;
+        cell.colSpan = 6;
         cell.textContent = "No players yet. Create accounts in the Register tab, then start a game.";
         row.appendChild(cell);
         tbody.appendChild(row);
@@ -577,14 +563,176 @@
         const status = document.createElement("td");
         status.textContent = STATUS_LABELS[leader.status] || "Inactive";
         status.style.fontWeight = leader.status === "active" ? "600" : "400";
+        const place = document.createElement("td");
+        place.textContent = leader.placement ? ordinal(leader.placement) : "-";
+        place.style.fontWeight = leader.placement ? "600" : "400";
         const target = document.createElement("td");
-        target.textContent = leader.active && leader.target ? leader.target : "-";
-        row.append(rank, name, score, status, target);
+        if (leader.status === "active") {
+          target.textContent = leader.target || "-";
+        } else if (leader.status === "eliminated" && leader.tagged_by) {
+          target.textContent = `tagged by ${leader.tagged_by}`;
+          target.className = "muted";
+        } else {
+          target.textContent = "-";
+        }
+        row.append(rank, name, score, status, place, target);
         tbody.appendChild(row);
       });
     }
 
+    // The loop of active players, starting at the tagger; the player half way round is as far from them as possible.
+    function loopSuggestion(active, taggerId) {
+      const byName = {};
+      active.forEach((l) => { byName[l.name] = l; });
+      let cur = active.find((l) => l.id === taggerId) || active[0];
+      const loop = [];
+      while (cur && !loop.includes(cur)) {
+        loop.push(cur);
+        cur = byName[cur.target];
+      }
+      return loop[Math.floor(loop.length / 2)] || null;
+    }
+
+    // Who the restored player would be inserted after, mirroring the server's rules.
+    function undoAnchor(player, mode, afterId) {
+      const active = state.leaders.filter((l) => l.status === "active");
+      if (mode === "tagger_place") {
+        const tagger = active.find((l) => l.id === player.tagged_by_id);
+        if (!tagger) return null;
+        return active.find((l) => l.target === tagger.name) || tagger;
+      }
+      return active.find((l) => String(l.id) === String(afterId)) || null;
+    }
+
+    function buildUndoPanel(player, active) {
+      const st = state.undo;
+      const tagger = active.find((l) => l.id === player.tagged_by_id);
+      const suggestion = loopSuggestion(active, player.tagged_by_id);
+      if (!st.mode) st.mode = tagger ? "tagger_place" : "insert";
+      if (!st.afterId && suggestion) st.afterId = String(suggestion.id);
+
+      const panel = document.createElement("div");
+      panel.className = "undo-panel";
+      panel.style.cssText = "margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);";
+
+      const modeRow = (value, text, disabled) => {
+        const label = document.createElement("label");
+        label.className = "flex";
+        label.style.cssText = "gap: 0.5rem; margin: 0 0 0.5rem; flex-wrap: nowrap; align-items: flex-start;";
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = `undo-mode-${player.id}`;
+        input.value = value;
+        input.checked = st.mode === value;
+        input.disabled = disabled;
+        input.addEventListener("change", () => {
+          st.mode = value;
+          renderUndoTools(state.leaders);
+        });
+        const span = document.createElement("span");
+        span.textContent = text;
+        label.append(input, span);
+        return label;
+      };
+      panel.appendChild(modeRow(
+        "tagger_place",
+        tagger ? `Take ${tagger.name}'s place (the tagger)` : "Take the tagger's place (unavailable: the tagger is no longer in play)",
+        !tagger,
+      ));
+      panel.appendChild(modeRow("insert", "Insert elsewhere. The suggested spot is as far from the tagger as possible.", false));
+
+      const select = document.createElement("select");
+      select.style.marginBottom = "0.5rem";
+      select.setAttribute("aria-label", "Insert the restored player after");
+      active.forEach((a) => {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        opt.textContent = `${a.name} → ${player.name} → ${a.target || a.name}` + (tagger && a.id === tagger.id ? "  (the tagger)" : "");
+        select.appendChild(opt);
+      });
+      select.value = st.afterId;
+      select.disabled = st.mode !== "insert";
+      select.addEventListener("change", () => {
+        st.afterId = select.value;
+        renderUndoTools(state.leaders);
+      });
+      panel.appendChild(select);
+
+      const anchor = undoAnchor(player, st.mode, st.afterId);
+      const preview = document.createElement("div");
+      preview.className = "muted";
+      preview.style.marginBottom = "0.75rem";
+      preview.textContent = anchor ? `Result: ${anchor.name} → ${player.name} → ${anchor.target || anchor.name}` : "Choose where to insert them.";
+      panel.appendChild(preview);
+
+      const actions = document.createElement("div");
+      actions.className = "flex";
+      const go = document.createElement("button");
+      go.type = "button";
+      go.textContent = `Restore ${player.name}`;
+      go.style.cssText = "width: auto; margin: 0;";
+      go.disabled = !anchor;
+      go.addEventListener("click", () => handleUndo(player));
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "secondary";
+      cancel.textContent = "Cancel";
+      cancel.style.cssText = "width: auto; margin: 0;";
+      cancel.addEventListener("click", () => {
+        state.undo = null;
+        renderUndoTools(state.leaders);
+      });
+      actions.append(go, cancel);
+      panel.appendChild(actions);
+      return panel;
+    }
+
+    function renderUndoTools(leaders) {
+      const list = document.getElementById("undo-list");
+      list.innerHTML = "";
+      const eliminated = leaders.filter((l) => l.status === "eliminated");
+      const active = leaders.filter((l) => l.status === "active");
+      if (state.undo && !eliminated.some((l) => l.id === state.undo.playerId)) state.undo = null;
+      if (!eliminated.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No eliminated players.";
+        list.appendChild(empty);
+        return;
+      }
+      eliminated.forEach((player) => {
+        const row = document.createElement("div");
+        row.style.cssText = "padding: 0.5rem 0; border-bottom: 1px solid var(--border);";
+        const head = document.createElement("div");
+        head.className = "flex";
+        const name = document.createElement("strong");
+        name.style.flex = "1 1 8rem";
+        name.textContent = player.nickname ? `${player.nickname} (@${player.name})` : player.name;
+        const by = document.createElement("span");
+        by.className = "muted";
+        by.style.flex = "1 1 8rem";
+        by.textContent = player.tagged_by ? `tagged by ${player.tagged_by}` : "tagger unknown";
+        const isOpen = !!state.undo && state.undo.playerId === player.id;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary";
+        btn.textContent = isOpen ? "Close" : "Undo tag";
+        btn.style.cssText = "width: auto; margin: 0;";
+        btn.disabled = !active.length;
+        btn.title = active.length ? "" : "There is nobody in play to insert them next to";
+        btn.addEventListener("click", () => {
+          state.undo = isOpen ? null : { playerId: player.id, mode: null, afterId: null };
+          renderUndoTools(state.leaders);
+        });
+        head.append(name, by, btn);
+        row.appendChild(head);
+        if (isOpen) row.appendChild(buildUndoPanel(player, active));
+        list.appendChild(row);
+      });
+    }
+
     function renderGameTools(leaders) {
+      renderUndoTools(leaders);
       const active = leaders.filter((l) => l.status === "active");
       const inactive = leaders.filter((l) => l.status === "inactive");
       const count = document.getElementById("init-count");
@@ -633,6 +781,33 @@
       });
     }
 
+    function renderEvent(item) {
+      const li = document.createElement("li");
+      li.style.padding = "0.75rem 0";
+      li.style.borderBottom = "1px solid var(--border)";
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.style.cursor = "pointer";
+      const title = document.createElement("strong");
+      title.textContent = item.title;
+      const time = document.createElement("span");
+      time.className = "muted";
+      const date = new Date(item.created_at);
+      time.textContent = ` · ${Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString()}`;
+      summary.append(title, time);
+      const ul = document.createElement("ul");
+      ul.style.cssText = "margin: 0.5rem 0 0; padding-left: 1.25rem;";
+      item.lines.forEach((line) => {
+        const row = document.createElement("li");
+        row.className = "muted";
+        row.textContent = `To ${line.recipient || "unknown"}: ${line.message}`;
+        ul.appendChild(row);
+      });
+      details.append(summary, ul);
+      li.appendChild(details);
+      return li;
+    }
+
     function renderNotifications(list) {
       state.notifications = list;
       const wrapper = document.getElementById("notifications-list");
@@ -644,6 +819,10 @@
       }
       empty.classList.add("hidden");
       list.forEach((item) => {
+        if (item.kind === "event") {
+          wrapper.appendChild(renderEvent(item));
+          return;
+        }
         const li = document.createElement("li");
         li.style.padding = "0.75rem 0";
         li.style.borderBottom = "1px solid var(--border)";
@@ -736,38 +915,6 @@
       }
       if (res.status === 204) return null;
       return res.json();
-    }
-
-    function playZap() {
-      const layer = document.getElementById("zap-layer");
-      if (!layer) return;
-      layer.innerHTML = "";
-      layer.classList.add("active");
-
-      const flash = document.createElement("div");
-      flash.className = "zap-flash";
-      layer.appendChild(flash);
-
-      const spawnBolt = () => {
-        const bolt = document.createElement("div");
-        bolt.className = "zap-bolt";
-        const offset = (Math.random() * 200 - 100) + "%";
-        const skew = (Math.random() * 40 - 20) + "deg";
-        bolt.style.setProperty("--bolt-x", offset);
-        bolt.style.setProperty("--bolt-skew", skew);
-        bolt.style.left = Math.random() * 100 + "%";
-        layer.appendChild(bolt);
-        setTimeout(() => bolt.remove(), 700);
-      };
-
-      spawnBolt();
-      const boltTimer = setInterval(spawnBolt, 600);
-
-      setTimeout(() => {
-        clearInterval(boltTimer);
-        layer.classList.remove("active");
-        layer.innerHTML = "";
-      }, 5000);
     }
 
     async function refreshMe() {
@@ -1014,7 +1161,6 @@
         if (typeof res.cooldown_seconds === "number") {
           setCooldown(res.cooldown_seconds);
         }
-        playZap();
         showStatus("Tag recorded!", "success");
       } catch (err) {
         if (typeof err.cooldownSeconds === "number") {
@@ -1095,6 +1241,21 @@
         await refreshLeaderboard();
       } catch (err) {
         showStatus(`Failed to start the game: ${err.message}`, "error");
+      }
+    }
+
+    async function handleUndo(player) {
+      const st = state.undo;
+      if (!st) return;
+      const body = { player_id: player.id, mode: st.mode };
+      if (st.mode === "insert") body.after_id = Number(st.afterId);
+      try {
+        await api("/admin/undo-tag", { method: "POST", body });
+        state.undo = null;
+        showStatus(`${player.name} is back in the game.`, "success");
+        await refreshLeaderboard();
+      } catch (err) {
+        showStatus(`Failed to undo the tag: ${err.message}`, "error");
       }
     }
 

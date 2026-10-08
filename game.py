@@ -9,10 +9,10 @@ def mint_token():
     return secrets.token_urlsafe(TOKEN_LEN)
 
 
-def _notify(db: Session, admin: Player, recipient: Player, message: str, when=None):
+def _notify(db: Session, admin: Player, recipient: Player, message: str, when=None, event=None):
     db.add(Notification(
         kind="update", recipient_id=recipient.id, tagger_id=admin.id,
-        message=message, created_at=when or datetime.utcnow(),
+        message=message, created_at=when or datetime.utcnow(), event=event,
     ))
 
 
@@ -30,10 +30,13 @@ def init_circle(db: Session, admin: Player, shuffle=True):
         player.target_id = nxt.id
         player.active = True
         player.eliminated = False
+        player.eliminated_at = None
+        player.eliminated_by_id = None
         player.score = 0
         player.last_tag_at = None
         player.score_last_updated = now
-        _notify(db, admin, player, f"A new game has started. Your target is '{nxt.name}'.", now)
+        _notify(db, admin, player, f"A new game has started. Your target is '{nxt.name}'.", now,
+                f"Game Started: {len(players)} players")
 
     db.commit()
     for player in players:
@@ -70,8 +73,9 @@ def insert_player(db: Session, admin: Player, newcomer: Player, anchor: Player):
         anchor_msg = f"A new player has joined the game. Your target is now '{newcomer.name}'."
     else:
         anchor_msg = f"Your target has changed: you are now after '{newcomer.name}' instead of '{old_target.name}'."
-    _notify(db, admin, anchor, anchor_msg, now)
-    _notify(db, admin, newcomer, f"You have been added to the game. Your target is '{old_target.name}'.", now)
+    event = f"Player Inserted: {newcomer.name} (after {anchor.name})"
+    _notify(db, admin, anchor, anchor_msg, now, event)
+    _notify(db, admin, newcomer, f"You have been added to the game. Your target is '{old_target.name}'.", now, event)
 
     db.commit()
     db.refresh(newcomer)
@@ -125,6 +129,8 @@ def do_tag(db: Session, tagger: Player):
     now = datetime.utcnow()
     tagger.last_tag_at = now
     tagger.score_last_updated = now
+    target.eliminated_at = now
+    target.eliminated_by_id = tagger.id
 
     new_target = db.get(Player, tagger.target_id) if tagger.target_id else None
 
@@ -136,14 +142,15 @@ def do_tag(db: Session, tagger: Player):
         tag_msg = f"You have tagged '{target.name}'."
     tagged_msg = f"You have been tagged by '{tagger.name}', you finished {ordinal(alive_before)}."
 
+    event = f"Player Tagged: {tagger.name} -> {target.name}" + (" (final tag)" if remaining <= 1 else "")
     tag_note = Notification(
         kind="tag", recipient_id=tagger.id, tagger_id=tagger.id,
-        target_name=target.name, message=tag_msg, created_at=now,
+        target_name=target.name, message=tag_msg, created_at=now, event=event,
     )
     db.add(tag_note)
     db.add(Notification(
         kind="tagged", recipient_id=target.id, tagger_id=tagger.id,
-        message=tagged_msg, created_at=now,
+        message=tagged_msg, created_at=now, event=event,
     ))
 
     db.commit()
@@ -151,3 +158,66 @@ def do_tag(db: Session, tagger: Player):
     db.refresh(target)
     db.refresh(tag_note)
     return tagger, new_target, target, tag_note
+
+
+def undo_tag(db: Session, admin: Player, player: Player, mode: str, anchor: Player | None = None):
+    """Reverse an elimination and splice the player back into the loop.
+
+    mode "tagger_place": the player takes the wrongful tagger's place. Whoever was hunting the tagger
+        now hunts the restored player, who in turn hunts the tagger:  hunter -> player -> tagger.
+    mode "insert": the player becomes the target of `anchor` and inherits anchor's old target:
+        anchor -> player -> old target.
+    Notified: the restored player, the anchor (their target changed) and the tagger (their tag no
+    longer counts). Nobody else, in particular not the old target.
+    """
+    if player.is_admin or player.active or not player.eliminated:
+        raise ValueError("Only eliminated players can be restored")
+    tagger = db.get(Player, player.eliminated_by_id) if player.eliminated_by_id else None
+
+    if mode == "tagger_place":
+        if tagger is None or tagger.is_admin or not tagger.active:
+            raise ValueError("The tagger is no longer in play, so their place can't be taken")
+        hunter = (
+            db.query(Player)
+            .filter(Player.active == True, Player.is_admin == False, Player.target_id == tagger.id)
+            .first()
+        )
+        anchor = hunter or tagger
+    elif mode == "insert":
+        if anchor is None or anchor.is_admin or not anchor.active:
+            raise ValueError("Choose an active player to insert the restored player after")
+    else:
+        raise ValueError("Unknown restore mode")
+
+    old_target = db.get(Player, anchor.target_id) if anchor.target_id else None
+    if old_target is None or not old_target.active:
+        old_target = anchor  # anchor was the only one left, so the pair target each other
+
+    now = datetime.utcnow()
+    player.active = True
+    player.eliminated = False
+    player.eliminated_at = None
+    player.eliminated_by_id = None
+    player.last_tag_at = None
+    player.score_last_updated = now
+    player.target_id = old_target.id
+    anchor.target_id = player.id
+
+    event = f"Tag Undone: {player.name} restored" + (f" (tagged by {tagger.name})" if tagger else "")
+    _notify(db, admin, player,
+            f"An admin reversed your elimination. You are back in the game, your target is '{old_target.name}'.", now, event)
+    if old_target.id == anchor.id:
+        anchor_msg = f"A player has rejoined the game. Your target is now '{player.name}'."
+    else:
+        anchor_msg = f"Your target has changed: you are now after '{player.name}' instead of '{old_target.name}'."
+    _notify(db, admin, anchor, anchor_msg, now, event)
+    if tagger is not None and not tagger.is_admin:
+        tagger.score = max(0, (tagger.score or 0) - 1)
+        tagger.score_last_updated = now
+        _notify(db, admin, tagger,
+                f"Your tag of '{player.name}' was reversed by an admin, so it no longer counts towards your score.", now, event)
+
+    db.commit()
+    db.refresh(player)
+    db.refresh(anchor)
+    return player, anchor

@@ -50,3 +50,9 @@ class WipeIn(BaseModel):
 
 class ReadIn(BaseModel):
     up_to: int
+
+
+class UndoIn(BaseModel):
+    player_id: int
+    mode: str                      # "tagger_place" or "insert"
+    after_id: int | None = None    # required for mode "insert"
