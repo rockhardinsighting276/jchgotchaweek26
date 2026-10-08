@@ -13,12 +13,7 @@ class LoginIn(BaseModel):
     password: str
 
 
-class TagIn(BaseModel):
-    message: str | None = None
-
-
 class InitIn(BaseModel):
-    players: List[str]
     shuffle: bool = True
 
 
@@ -32,3 +27,32 @@ class TagOut(BaseModel):
 
 class NicknameIn(BaseModel):
     nickname: str | None = None
+
+
+class AnnounceIn(BaseModel):
+    message: str
+
+
+class CreateUserIn(BaseModel):
+    name: str
+    password: str
+    is_admin: bool = False
+
+
+class InsertIn(BaseModel):
+    player_id: int
+    after_id: int
+
+
+class WipeIn(BaseModel):
+    admin_secret: str
+
+
+class ReadIn(BaseModel):
+    up_to: int
+
+
+class UndoIn(BaseModel):
+    player_id: int
+    mode: str                      # "tagger_place" or "insert"
+    after_id: int | None = None    # required for mode "insert"

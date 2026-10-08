@@ -1,27 +1,29 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect, Body, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, joinedload
 import os
+import re
 import uuid
 from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, TagIn, InitIn, TagOut, NicknameIn
-from game import init_circle, do_tag, mint_token
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn
+from game import init_circle, insert_player, undo_tag, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "changeme")
-TAG_COOLDOWN = timedelta(seconds=float(os.getenv("TAG_COOLDOWN_SECONDS", "6")))
-MAX_PASSWORD_BYTES = 128
+MAX_PASSWORD_BYTES = 72
 AVATAR_DIR = Path("static/avatars")
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
 ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-TAG_COOLDOWN = timedelta(minutes=0.1)
+TAG_COOLDOWN = timedelta(seconds=float(os.getenv("TAG_COOLDOWN_SECONDS", "6")))
 
 def cooldown_seconds(player: Player) -> int:
     last = player.last_tag_at
@@ -97,7 +99,7 @@ class Hub:
         for ws in list(self.conns):
             try:
                 await ws.send_json(payload)
-            except WebSocketDisconnect:
+            except Exception:
                 dead.append(ws)
         for ws in dead:
             self.remove(ws)
@@ -106,29 +108,15 @@ class Hub:
 hub = Hub()
 
 
+async def notify_changed():
+    # Content-free ping: each client re-fetches only what it is allowed to see.
+    await hub.broadcast({"type": "changed"})
+
+
 @app.websocket("/ws/leaderboard")
 async def ws_leaderboard(ws: WebSocket):
     await hub.add(ws)
     try:
-        db = SessionLocal()
-        try:
-            leaders = [
-                p.public()
-                for p in db.query(Player)
-                .filter(Player.is_admin == False)
-                .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-                .all()
-            ]
-            notes = [
-                n.public()
-                for n in db.query(Notification)
-                .order_by(Notification.created_at.desc())
-                .limit(25)
-            ]
-        finally:
-            db.close()
-        await ws.send_json({"type": "leaderboard", "leaders": leaders})
-        await ws.send_json({"type": "notifications", "notifications": notes})
         while True:
             await ws.receive_text() # keepalive; client sends pings
     except WebSocketDisconnect:
@@ -141,8 +129,19 @@ def root():
 
 
 # --- Public / Auth routes ---
+@app.get("/setup")
+def setup_status(db: Session = Depends(get_db)):
+    has_admin = db.query(Player).filter(Player.is_admin == True).first() is not None
+    return {"needs_admin": not has_admin}
+
+
 @app.post("/register")
 def register(body: RegisterIn, db: Session = Depends(get_db)):
+    # Public registration only exists to create the very first admin.
+    if db.query(Player).filter(Player.is_admin == True).first():
+        raise HTTPException(403, "Registration is closed. Ask an admin to create your account.")
+    if not body.admin_secret or body.admin_secret != ADMIN_SECRET:
+        raise HTTPException(403, "Admin secret required to create the first admin")
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Name is required")
@@ -223,6 +222,7 @@ def me(p: Player = Depends(auth_player)):
         "name": p.name,
         "score": p.score,
         "active": p.active,
+        "status": p.status(),
         "is_admin": p.is_admin,
         "avatar_url": p.avatar_url(),
         "nickname": p.nickname,
@@ -246,14 +246,7 @@ async def update_nickname(body: NicknameIn, p: Player = Depends(auth_player), db
     p.nickname = nickname or None
     db.commit()
     db.refresh(p)
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
     return {"nickname": p.nickname}
 
 
@@ -295,21 +288,13 @@ async def upload_avatar(
     db.commit()
     db.refresh(p)
 
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
 
     return {"avatar_url": p.avatar_url()}
 
 
 @app.post("/tag", response_model=TagOut)
 async def tag(
-    body: TagIn | None = Body(default=None),
     p: Player = Depends(auth_player),
     db: Session = Depends(get_db),
 ):
@@ -320,100 +305,235 @@ async def tag(
             {"message": "Cooldown active", "cooldown_seconds": remaining},
         )
     try:
-        tagger, new_target, eliminated = do_tag(db, p)
+        tagger, new_target, eliminated, note = do_tag(db, p)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    # broadcast leaderboard
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
-
-    notification_payload = None
-    if body and body.message:
-        message = body.message.strip()
-        if message:
-            if len(message) > 280:
-                raise HTTPException(400, "Message too long (max 280 characters)")
-            note = Notification(
-                tagger_id=tagger.id,
-                message=message,
-                target_name=eliminated.name if eliminated else None,
-            )
-            db.add(note)
-            db.commit()
-            db.refresh(note)
-            notification_payload = note.public()
-            await hub.broadcast({"type": "notification", "notification": notification_payload})
+    await notify_changed()
     return {
         "ok": True,
         "new_target": (new_target.name if new_target else None),
         "score": tagger.score,
-        "notification": notification_payload,
+        "notification": note.public(),
         "cooldown_seconds": cooldown_seconds(tagger),
     }
 
 
 @app.get("/leaderboard")
-def leaderboard(db: Session = Depends(get_db)):
-    leaders = [
-        p.public()
-        for p in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
+def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    players = db.query(Player).filter(Player.is_admin == False).all()
+    names = {pl.id: pl.name for pl in players}
+    active = [pl for pl in players if pl.active]
+    out = [pl for pl in players if pl.status() == "eliminated"]
+    # Placement = 1 + the number of players who outlasted you (still active, or eliminated later).
+    # Worked out from elimination order, so late inserts and undone tags shift it correctly.
+    out.sort(key=lambda pl: pl.eliminated_at or datetime.min, reverse=True)
+    placement = {pl.id: len(active) + i + 1 for i, pl in enumerate(out)}
+    if len(active) == 1 and out:
+        placement[active[0].id] = 1  # last one standing
+
+    group = {"active": 0, "eliminated": 1, "inactive": 2}
+
+    def order(pl):
+        g = group[pl.status()]
+        if g == 1:  # eliminated: best placement first
+            return (1, placement[pl.id], 0, 0, pl.id)
+        return (g, 0, -(pl.score or 0), pl.score_last_updated or datetime.min, pl.id)
+
+    leaders = []
+    for pl in sorted(players, key=order):
+        row = pl.public()
+        gone = pl.status() == "eliminated"
+        row["target"] = names.get(pl.target_id) if pl.active else None
+        row["placement"] = placement.get(pl.id)
+        row["tagged_by"] = names.get(pl.eliminated_by_id) if gone else None
+        row["tagged_by_id"] = pl.eliminated_by_id if gone else None
+        leaders.append(row)
     return {"leaders": leaders}
 
 
+def group_events(notes):
+    """Admin view: collapse the notes one action produced into a single event.
+
+    Every note of an action shares (created_at, tagger_id): the tagger, or the admin who acted.
+    Announcements stay as they are.
+    """
+    groups = {}
+    for n in notes:
+        key = ("announcement", n.id) if n.kind == "global" else (n.created_at, n.tagger_id)
+        groups.setdefault(key, []).append(n)
+    items = []
+    for grp in groups.values():
+        grp.sort(key=lambda n: n.id)
+        if grp[0].kind == "global":
+            items.append(grp[0].public(include_recipient=True))
+            continue
+        title = next((n.event for n in grp if n.event), None)
+        if title is None:  # rows written before events had titles
+            tag = next((n for n in grp if n.kind == "tag"), None)
+            if tag:
+                title = f"Player Tagged: {tag.recipient.name if tag.recipient else '?'} -> {tag.target_name}"
+            elif len(grp) > 2:
+                title = f"Game Started: {len(grp)} players"
+            else:
+                title = "Update"
+        items.append({
+            "id": grp[-1].id,
+            "kind": "event",
+            "title": title,
+            "created_at": grp[0].created_at.isoformat() + "Z",
+            "lines": [{"recipient": n.recipient.name if n.recipient else None, "message": n.message} for n in grp],
+        })
+    items.sort(key=lambda i: (i["created_at"], i["id"]), reverse=True)
+    return items[:150]
+
+
+def visible_notes(db: Session, p: Player):
+    q = db.query(Notification).filter(Notification.kind.isnot(None))
+    if not p.is_admin:
+        q = q.filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
+    return q
+
+
 @app.get("/notifications")
-def notifications(db: Session = Depends(get_db)):
-    notes = [
-        n.public()
-        for n in db.query(Notification)
-        .order_by(Notification.created_at.desc())
-        .limit(50)
-    ]
-    return {"notifications": notes}
+def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    limit = 1500 if p.is_admin else 50  # admins oversee everything (grouped into events below)
+    notes = (
+        visible_notes(db, p)
+        .options(joinedload(Notification.recipient))
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(limit)
+        .all()
+    )
+    seen = p.notif_seen_id or 0
+    unread = 0
+    if not p.is_admin:
+        # a player's own "you tagged X" confirmation never counts as unread
+        unread = visible_notes(db, p).filter(Notification.id > seen, Notification.kind != "tag").count()
+    return {
+        "notifications": group_events(notes) if p.is_admin else [n.public() for n in notes],
+        "unread": unread,
+        "seen_id": seen,
+    }
+
+
+@app.post("/notifications/read")
+def mark_notifications_read(body: ReadIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    latest = db.query(func.max(Notification.id)).scalar() or 0
+    up_to = min(body.up_to, latest)
+    if up_to > (p.notif_seen_id or 0):
+        p.notif_seen_id = up_to
+        db.commit()
+    return {"ok": True, "seen_id": p.notif_seen_id or 0}
+
 
 # --- Admin ---
 @app.post("/admin/init")
 async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
-    if len(body.players) < 2:
-        raise HTTPException(400, "Need at least 2 players")
-    cleaned = [name.strip() for name in body.players if name.strip()]
-    if len(cleaned) < 2:
-        raise HTTPException(400, "Need at least 2 valid player names")
-    if len(set(cleaned)) != len(cleaned):
-        raise HTTPException(400, "Player names must be unique")
     try:
-        init_circle(db, cleaned, shuffle=body.shuffle)
+        init_circle(db, p, shuffle=body.shuffle)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    leaders = [
-        pl.public()
-        for pl in db.query(Player)
-        .filter(Player.is_admin == False)
-        .order_by(Player.active.desc(), Player.score.desc(), Player.score_last_updated.asc(), Player.id.asc())
-        .all()
-    ]
-    await hub.broadcast({"type": "leaderboard", "leaders": leaders})
+    await notify_changed()
     return {"ok": True}
 
 
-@app.get("/admin/mapping")
-def admin_mapping(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+@app.post("/admin/insert")
+async def admin_insert(body: InsertIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
-    
-    res = []
-    for pl in db.query(Player).order_by(Player.id).all():
-        tgt = db.get(Player, pl.target_id) if pl.target_id else None
-        res.append({"player": pl.name, "active": pl.active, "target": (tgt.name if tgt else None), "score": pl.score})
-    return {"mapping": res}
+    newcomer = db.get(Player, body.player_id)
+    anchor = db.get(Player, body.after_id)
+    if not newcomer or not anchor:
+        raise HTTPException(404, "Player not found")
+    try:
+        insert_player(db, p, newcomer, anchor)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.post("/admin/undo-tag")
+async def admin_undo_tag(body: UndoIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    player = db.get(Player, body.player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    anchor = db.get(Player, body.after_id) if body.after_id is not None else None
+    try:
+        undo_tag(db, p, player, body.mode, anchor)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.post("/admin/users")
+def admin_create_user(body: CreateUserIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    if len(body.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters long")
+    if len(body.password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(400, "Password too long; must be 72 bytes or fewer")
+    if db.query(Player).filter_by(name=name).first():
+        raise HTTPException(409, "An account with that name already exists")
+    player = Player(
+        name=name,
+        token=mint_token(),
+        is_admin=body.is_admin,
+        active=False,  # accounts start out of the game until an admin starts it or inserts them
+        password_hash=hash_password(body.password),
+        score_last_updated=datetime.utcnow(),
+    )
+    db.add(player)
+    db.commit()
+    return {"ok": True, "name": player.name, "is_admin": player.is_admin}
+
+
+@app.post("/admin/announce")
+async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "Message is required")
+    if len(message) > 1000:
+        raise HTTPException(400, "Message too long (max 1000 characters)")
+    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message)
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    await notify_changed()
+    return {"ok": True, "notification": note.public()}
+
+
+AVATAR_FILE = re.compile(r"^\d+_[0-9a-f]{32}\.[a-z]+$")
+
+
+@app.post("/admin/wipe")
+async def admin_wipe(body: WipeIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    if not body.admin_secret or body.admin_secret != ADMIN_SECRET:
+        raise HTTPException(403, "Incorrect admin secret")
+    db.query(Notification).delete()
+    db.query(Player).update({Player.target_id: None})
+    db.query(Player).delete()
+    db.commit()
+    for f in AVATAR_DIR.iterdir():
+        if f.is_file() and AVATAR_FILE.match(f.name):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    await notify_changed()
+    return {"ok": True}

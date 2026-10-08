@@ -83,6 +83,7 @@
     [data-theme="dark"] .theme-toggle .sun { display: block; }
     [data-theme="dark"] .theme-toggle .moon { display: none; }
     .grid { display: grid; gap: 1.5rem; }
+    #auth-section:not(.two) { max-width: 420px; margin: 0 auto; }
     @media (min-width: 768px) {
       .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -127,32 +128,8 @@
     .nickname-controls { margin-top: 1rem; }
     .player-cell { display: flex; align-items: center; gap: 0.35rem; }
     .small-handle { margin-left: 0.4rem; font-size: 0.8rem; color: var(--muted); }
-    .zap-layer { position: fixed; inset: 0; pointer-events: none; z-index: 999; overflow: hidden; display: none; }
-    .zap-layer.active { display: block; }
-    @media (prefers-reduced-motion: reduce) { .zap-layer.active { display: none; } }
-    .zap-flash {
-      position: absolute; inset: 0;
-      background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 65%);
-      animation: flash 5s ease-out forwards;
-    }
-    .zap-bolt {
-      position: absolute; width: 4px; height: 80vh; top: -20vh; left: 50%;
-      background: linear-gradient(180deg, rgba(255,255,255,0) 0%, #facc15 30%, #f97316 70%, rgba(255,255,255,0) 100%);
-      filter: drop-shadow(0 0 16px rgba(250, 204, 21, 0.8));
-      transform-origin: top;
-      animation: bolt 0.6s ease-out forwards;
-    }
-    @keyframes flash {
-      0% { opacity: 0; } 5% { opacity: 1; } 12% { opacity: 0.3; } 20% { opacity: 0; }
-      40% { opacity: 0.25; } 50% { opacity: 0.05; } 70% { opacity: 0.2; } 100% { opacity: 0; }
-    }
-    @keyframes bolt {
-      0% { opacity: 0; transform: translateX(0) scaleY(0.4) skewX(0deg); }
-      20% { opacity: 1; transform: translateX(var(--bolt-x)) scaleY(1) skewX(var(--bolt-skew)); }
-      100% { opacity: 0; transform: translateX(calc(var(--bolt-x) * 0.6)) scaleY(0.3) skewX(calc(var(--bolt-skew) * 0.5)); }
-    }
     label { display: block; font-size: 0.9rem; margin-bottom: 0.35rem; }
-    input, textarea, button {
+    input, textarea, button, select {
       width: 100%;
       box-sizing: border-box;
       border-radius: 8px;
@@ -162,9 +139,9 @@
       font-family: inherit;
       margin-bottom: 0.75rem;
     }
-    input, textarea { background: var(--surface-2); color: var(--text); }
+    input, textarea, select { background: var(--surface-2); color: var(--text); }
     input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
-    input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
+    input[type="checkbox"], input[type="radio"] { width: auto; margin: 0; accent-color: var(--accent); }
     textarea { min-height: 120px; resize: vertical; }
     button {
       border: 1px solid transparent;
@@ -194,6 +171,11 @@
       display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px;
       background: var(--accent); color: var(--accent-ink); font-size: 0.8rem; margin-left: 0.5rem;
     }
+    .badge {
+      display: inline-block; min-width: 1.25rem; padding: 0 0.4rem; margin-left: 0.4rem;
+      border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+      font-size: 0.75rem; font-weight: 700; line-height: 1.25rem; text-align: center;
+    }
     #target-name { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.01em; color: var(--accent); }
     .muted { color: var(--muted); font-size: 0.9rem; }
     .admin-only { border: 1px dashed var(--accent); }
@@ -211,19 +193,19 @@
     </header>
 
     <div id="status" class="status hidden"></div>
-    <div id="zap-layer" class="zap-layer"></div>
 
-    <section id="auth-section" class="grid two">
-      <div class="card">
-        <h2>Register</h2>
+    <section id="auth-section" class="grid">
+      <div class="card hidden" id="register-card">
+        <h2>Create the first admin</h2>
+        <p class="muted">Registration closes once an admin exists. After that, admins create accounts from the Register tab.</p>
         <form id="register-form">
           <label for="register-name">Name</label>
           <input id="register-name" name="name" placeholder="Player name" required>
           <label for="register-password">Password <span class="muted">(6-72 chars)</span></label>
           <input id="register-password" name="password" type="password" placeholder="Choose a password" minlength="6" maxlength="72" required>
-          <label for="register-secret">Admin Secret <span class="muted">(optional)</span></label>
-          <input id="register-secret" name="admin_secret" placeholder="Admin secret if you are an admin">
-          <button type="submit">Register</button>
+          <label for="register-secret">Admin secret</label>
+          <input id="register-secret" name="admin_secret" placeholder="ADMIN_SECRET from the server" required>
+          <button type="submit">Create admin</button>
         </form>
       </div>
       <div class="card">
@@ -240,9 +222,12 @@
 
     <section id="game-section" class="hidden">
       <nav class="nav-tabs">
-        <button type="button" class="tab active" data-page="tag">Tag</button>
-        <button type="button" class="tab" data-page="leaderboard">Leaderboard</button>
-        <button type="button" class="tab" data-page="notifications">Notifications</button>
+        <button type="button" class="tab active" data-page="tag" data-role="player">Tag</button>
+        <button type="button" class="tab" data-page="leaderboard" data-role="admin">Leaderboard</button>
+        <button type="button" class="tab" data-page="game" data-role="admin">Game</button>
+        <button type="button" class="tab" data-page="notifications">Notifications<span id="notif-badge" class="badge hidden"></span></button>
+        <button type="button" class="tab" data-page="register" data-role="admin">Register</button>
+        <button type="button" id="logout-btn" class="secondary" style="margin: 0 0 0.4rem auto; width: auto; padding: 0.4rem 0.9rem;">Log out</button>
       </nav>
 
       <div id="page-tag" class="page">
@@ -254,6 +239,7 @@
                 <h2 style="margin: 0;">Welcome, <span id="player-name"></span></h2>
                 <div class="muted">Account name: <span id="player-handle"></span></div>
                 <div class="muted">Score: <span id="player-score">0</span></div>
+                <div class="muted">Status: <span id="player-status"></span></div>
               </div>
             </div>
             <div class="upload-controls">
@@ -266,7 +252,6 @@
               <input id="nickname-input" placeholder="Enter nickname" maxlength="40">
               <button type="button" id="save-nickname-btn">Save Nickname</button>
             </div>
-            <button type="button" id="logout-btn" class="secondary" style="margin-top: 1rem; max-width: 160px;">Logout</button>
           </div>
 
           <div class="card">
@@ -274,46 +259,12 @@
             <p id="target-wrapper">
               <span id="target-name">No target yet.</span>
             </p>
-            <label for="tag-message">Optional message to everyone</label>
-            <textarea id="tag-message" placeholder="Share the story (max 280 characters)"></textarea>
             <button type="button" id="tag-btn">Tag Successful</button>
             <div class="muted" style="margin-top: 0.5rem;">
               Next tag available in: <span id="tag-cooldown">Ready</span>
             </div>
           </div>
 
-          <div id="admin-panel" class="card admin-only hidden">
-            <div class="flex" style="justify-content: space-between;">
-              <h2 style="margin: 0;">Admin Controls <span class="pill">Admin</span></h2>
-              <button type="button" id="load-mapping" class="secondary" style="max-width: 150px;">View Current Mapping</button>
-            </div>
-            <form id="init-form">
-              <label for="init-names">Players (one per line)</label>
-              <textarea id="init-names" placeholder="Alice&#10;Bob&#10;Charlie"></textarea>
-              <div class="flex">
-                <label class="flex" style="gap: 0.35rem; margin: 0;">
-                  <input type="checkbox" id="init-shuffle" checked>
-                  Shuffle order
-                </label>
-                <span class="muted">Requires at least 2 names.</span>
-              </div>
-              <button type="submit" class="danger">Start / Reset Game</button>
-            </form>
-            <div id="mapping-view" class="hidden">
-              <h3 style="margin-bottom: 0.5rem;">Target Mapping</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Player</th>
-                    <th>Active</th>
-                    <th>Target</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody id="mapping-body"></tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -323,29 +274,93 @@
             <h2 style="margin: 0;">Leaderboard</h2>
             <button type="button" id="refresh-leaderboard" class="secondary" style="max-width: 140px;">Refresh</button>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Player</th>
-                <th>Score</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="leaderboard-body">
-            </tbody>
-          </table>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr><th>#</th><th>Player</th><th>Score</th><th>Status</th><th>Place</th><th>Target</th></tr>
+              </thead>
+              <tbody id="leaderboard-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="page-game" class="page hidden">
+        <div class="grid">
+          <div class="card">
+            <h2 style="margin-top: 0;">Start / reset game</h2>
+            <p class="muted">Starts a new game with every non-admin player in one circle and resets all scores. Each player is told their first target.</p>
+            <form id="init-form">
+              <div class="flex" style="margin-bottom: 0.75rem;">
+                <label class="flex" style="gap: 0.35rem; margin: 0;">
+                  <input type="checkbox" id="init-shuffle" checked>
+                  Shuffle order
+                </label>
+                <span class="muted" id="init-count"></span>
+              </div>
+              <button type="submit" class="danger">Start / Reset Game</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2 style="margin-top: 0;">Inactive players</h2>
+            <p class="muted">Players who are not in the current game, such as accounts added after it started. Pick the player they will become the target of. They then take over that player's old target, so the loop stays intact. Only those two players are notified.</p>
+            <div id="inactive-list"></div>
+          </div>
+          <div class="card">
+            <h2 style="margin-top: 0;">Undo a tag</h2>
+            <p class="muted">If a dispute is upheld, bring an eliminated player back. The tagger's point is removed. Only the restored player, the player whose target changes and the tagger are notified.</p>
+            <div id="undo-list"></div>
+          </div>
+          <div class="card" style="border-color: var(--danger);">
+            <h2 style="margin-top: 0;">Danger zone</h2>
+            <p class="muted">Wipes every account (including yours), all notifications and uploaded avatars. You will be logged out and first-admin setup will appear again.</p>
+            <form id="wipe-form">
+              <label for="wipe-secret">Admin secret</label>
+              <input id="wipe-secret" type="password" autocomplete="off" required>
+              <button type="submit" class="danger">Wipe database</button>
+            </form>
+          </div>
         </div>
       </div>
 
       <div id="page-notifications" class="page hidden">
+        <div id="announce-card" class="card admin-only hidden" style="margin-bottom: 1.5rem;">
+          <h2 style="margin-top: 0;">Send announcement</h2>
+          <p class="muted">Every player sees it in their Notifications tab.</p>
+          <form id="announce-form">
+            <label for="announce-message">Message</label>
+            <textarea id="announce-message" maxlength="1000" placeholder="Rule changes, schedule updates, reminders (max 1000 characters)"></textarea>
+            <button type="submit">Send announcement</button>
+          </form>
+        </div>
         <div class="card">
           <div class="flex" style="justify-content: space-between;">
-            <h2 style="margin: 0;">Notifications</h2>
+            <h2 id="notifications-title" style="margin: 0;">Notifications</h2>
             <button type="button" id="refresh-notifications" class="secondary" style="max-width: 160px;">Refresh</button>
           </div>
           <div id="notifications-empty" class="muted" style="margin-top: 0.75rem;">No notifications yet.</div>
           <ul id="notifications-list" style="list-style: none; padding: 0; margin: 0;"></ul>
+        </div>
+      </div>
+      <div id="page-register" class="page hidden">
+        <div class="card">
+          <h2 style="margin-top: 0;">Create account</h2>
+          <p class="muted">Players log in with the name and password you set here. Share the password with them privately.</p>
+          <form id="create-user-form">
+            <label for="create-name">Name</label>
+            <input id="create-name" placeholder="Player name" autocomplete="off" required>
+            <label for="create-password">Password <span class="muted">(6-72 chars)</span></label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input id="create-password" type="text" minlength="6" maxlength="72" autocomplete="off" required>
+              <button type="button" id="generate-password" class="secondary" style="width: auto; white-space: nowrap;">Generate</button>
+            </div>
+            <label for="create-role">Account type</label>
+            <select id="create-role">
+              <option value="player">Player</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button type="submit">Create account</button>
+          </form>
         </div>
       </div>
     </section>
@@ -361,6 +376,9 @@
       wsTicker: null,
       leaders: [],
       notifications: [],
+      unread: 0,
+      undo: null,
+      seenId: 0,
       currentPage: "tag",
       cooldownSeconds: 0,
       cooldownTimer: null,
@@ -388,15 +406,38 @@
       document.getElementById("game-section").classList.toggle("hidden", !loggedIn);
     }
 
+    const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "game", "notifications", "register"] };
+    const STATUS_LABELS = { active: "Active", inactive: "Inactive", eliminated: "Eliminated" };
+    function ordinal(n) {
+      const v = n % 100;
+      const suffix = v >= 11 && v <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
+      return n + suffix;
+    }
+    const PLAYER_STATUS = { active: "Active", inactive: "Not in the current game", eliminated: "Eliminated" };
+
+    function applyRole(user) {
+      const isAdmin = !!user?.is_admin;
+      document.querySelectorAll(".nav-tabs .tab").forEach((tab) => {
+        const role = tab.dataset.role;
+        tab.classList.toggle("hidden", (role === "admin" && !isAdmin) || (role === "player" && isAdmin));
+      });
+      document.getElementById("announce-card").classList.toggle("hidden", !isAdmin);
+      document.getElementById("notifications-title").textContent = isAdmin ? "All notifications" : "Notifications";
+      if (user) {
+        const allowed = isAdmin ? PAGES.admin : PAGES.player;
+        if (!allowed.includes(state.currentPage)) switchPage(allowed[0]);
+      }
+    }
+
     function setUser(user) {
       state.user = user;
       const displayName = user ? (user.nickname || user.name || "") : "";
       document.getElementById("player-name").textContent = displayName;
       document.getElementById("player-handle").textContent = user?.name ?? "";
       document.getElementById("player-score").textContent = user?.score ?? 0;
+      document.getElementById("player-status").textContent = user ? (PLAYER_STATUS[user.status] || "") : "";
       updateAvatarDisplay(user?.avatar_url);
-      const adminPanel = document.getElementById("admin-panel");
-      adminPanel.classList.toggle("hidden", !user?.is_admin);
+      applyRole(user);
       const nicknameInput = document.getElementById("nickname-input");
       if (nicknameInput) {
         nicknameInput.value = user?.nickname ?? "";
@@ -422,20 +463,22 @@
       document.querySelectorAll(".nav-tabs .tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.page === page);
       });
-      const pages = {
-        tag: document.getElementById("page-tag"),
-        leaderboard: document.getElementById("page-leaderboard"),
-        notifications: document.getElementById("page-notifications"),
-      };
-      Object.entries(pages).forEach(([name, el]) => {
-        el.classList.toggle("hidden", name !== page);
+      document.querySelectorAll(".page").forEach((el) => {
+        el.classList.toggle("hidden", el.id !== `page-${page}`);
       });
+      if (page === "notifications") markNotificationsRead();
     }
 
     function updateCooldownDisplay() {
       const label = document.getElementById("tag-cooldown");
       const button = document.getElementById("tag-btn");
       if (!label || !button) return;
+      const inPlay = !state.user || state.user.active !== false;
+      if (!inPlay) {
+        label.textContent = state.user.status === "eliminated" ? "Eliminated" : "Not in the game";
+        button.disabled = true;
+        return;
+      }
       if (state.cooldownSeconds <= 0) {
         label.textContent = "Ready";
         button.disabled = false;
@@ -481,13 +524,14 @@
 
     function renderLeaderboard(leaders) {
       state.leaders = leaders;
+      renderGameTools(leaders);
       const tbody = document.getElementById("leaderboard-body");
       tbody.innerHTML = "";
       if (!leaders.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 4;
-        cell.textContent = "No players yet.";
+        cell.colSpan = 6;
+        cell.textContent = "No players yet. Create accounts in the Register tab, then start a game.";
         row.appendChild(cell);
         tbody.appendChild(row);
         return;
@@ -505,8 +549,7 @@
         avatar.src = leader.avatar_url || DEFAULT_AVATAR;
         avatar.alt = `${leader.name}'s avatar`;
         const nameText = document.createElement("span");
-        const displayName = leader.nickname || leader.name;
-        nameText.textContent = displayName;
+        nameText.textContent = leader.nickname || leader.name;
         nameWrap.append(avatar, nameText);
         if (leader.nickname) {
           const handle = document.createElement("span");
@@ -518,32 +561,251 @@
         const score = document.createElement("td");
         score.textContent = leader.score;
         const status = document.createElement("td");
-        status.textContent = leader.active ? "Active" : "Out";
-        status.style.fontWeight = leader.active ? "600" : "400";
-        row.append(rank, name, score, status);
+        status.textContent = STATUS_LABELS[leader.status] || "Inactive";
+        status.style.fontWeight = leader.status === "active" ? "600" : "400";
+        const place = document.createElement("td");
+        place.textContent = leader.placement ? ordinal(leader.placement) : "-";
+        place.style.fontWeight = leader.placement ? "600" : "400";
+        const target = document.createElement("td");
+        if (leader.status === "active") {
+          target.textContent = leader.target || "-";
+        } else if (leader.status === "eliminated" && leader.tagged_by) {
+          target.textContent = `tagged by ${leader.tagged_by}`;
+          target.className = "muted";
+        } else {
+          target.textContent = "-";
+        }
+        row.append(rank, name, score, status, place, target);
         tbody.appendChild(row);
       });
     }
 
-    function renderMapping(mapping) {
-      const wrapper = document.getElementById("mapping-view");
-      const tbody = document.getElementById("mapping-body");
-      if (!mapping.length) {
-        tbody.innerHTML = "<tr><td colspan='4'>No mapping available.</td></tr>";
-      } else {
-        tbody.innerHTML = "";
-        mapping.forEach(item => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${item.player}</td>
-            <td>${item.active ? "Yes" : "No"}</td>
-            <td>${item.target ?? "-"}</td>
-            <td>${item.score}</td>
-          `;
-          tbody.appendChild(row);
-        });
+    // The loop of active players, starting at the tagger; the player half way round is as far from them as possible.
+    function loopSuggestion(active, taggerId) {
+      const byName = {};
+      active.forEach((l) => { byName[l.name] = l; });
+      let cur = active.find((l) => l.id === taggerId) || active[0];
+      const loop = [];
+      while (cur && !loop.includes(cur)) {
+        loop.push(cur);
+        cur = byName[cur.target];
       }
-      wrapper.classList.remove("hidden");
+      return loop[Math.floor(loop.length / 2)] || null;
+    }
+
+    // Who the restored player would be inserted after, mirroring the server's rules.
+    function undoAnchor(player, mode, afterId) {
+      const active = state.leaders.filter((l) => l.status === "active");
+      if (mode === "tagger_place") {
+        const tagger = active.find((l) => l.id === player.tagged_by_id);
+        if (!tagger) return null;
+        return active.find((l) => l.target === tagger.name) || tagger;
+      }
+      return active.find((l) => String(l.id) === String(afterId)) || null;
+    }
+
+    function buildUndoPanel(player, active) {
+      const st = state.undo;
+      const tagger = active.find((l) => l.id === player.tagged_by_id);
+      const suggestion = loopSuggestion(active, player.tagged_by_id);
+      if (!st.mode) st.mode = tagger ? "tagger_place" : "insert";
+      if (!st.afterId && suggestion) st.afterId = String(suggestion.id);
+
+      const panel = document.createElement("div");
+      panel.className = "undo-panel";
+      panel.style.cssText = "margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);";
+
+      const modeRow = (value, text, disabled) => {
+        const label = document.createElement("label");
+        label.className = "flex";
+        label.style.cssText = "gap: 0.5rem; margin: 0 0 0.5rem; flex-wrap: nowrap; align-items: flex-start;";
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = `undo-mode-${player.id}`;
+        input.value = value;
+        input.checked = st.mode === value;
+        input.disabled = disabled;
+        input.addEventListener("change", () => {
+          st.mode = value;
+          renderUndoTools(state.leaders);
+        });
+        const span = document.createElement("span");
+        span.textContent = text;
+        label.append(input, span);
+        return label;
+      };
+      panel.appendChild(modeRow(
+        "tagger_place",
+        tagger ? `Take ${tagger.name}'s place (the tagger)` : "Take the tagger's place (unavailable: the tagger is no longer in play)",
+        !tagger,
+      ));
+      panel.appendChild(modeRow("insert", "Insert elsewhere. The suggested spot is as far from the tagger as possible.", false));
+
+      const select = document.createElement("select");
+      select.style.marginBottom = "0.5rem";
+      select.setAttribute("aria-label", "Insert the restored player after");
+      active.forEach((a) => {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        opt.textContent = `${a.name} → ${player.name} → ${a.target || a.name}` + (tagger && a.id === tagger.id ? "  (the tagger)" : "");
+        select.appendChild(opt);
+      });
+      select.value = st.afterId;
+      select.disabled = st.mode !== "insert";
+      select.addEventListener("change", () => {
+        st.afterId = select.value;
+        renderUndoTools(state.leaders);
+      });
+      panel.appendChild(select);
+
+      const anchor = undoAnchor(player, st.mode, st.afterId);
+      const preview = document.createElement("div");
+      preview.className = "muted";
+      preview.style.marginBottom = "0.75rem";
+      preview.textContent = anchor ? `Result: ${anchor.name} → ${player.name} → ${anchor.target || anchor.name}` : "Choose where to insert them.";
+      panel.appendChild(preview);
+
+      const actions = document.createElement("div");
+      actions.className = "flex";
+      const go = document.createElement("button");
+      go.type = "button";
+      go.textContent = `Restore ${player.name}`;
+      go.style.cssText = "width: auto; margin: 0;";
+      go.disabled = !anchor;
+      go.addEventListener("click", () => handleUndo(player));
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "secondary";
+      cancel.textContent = "Cancel";
+      cancel.style.cssText = "width: auto; margin: 0;";
+      cancel.addEventListener("click", () => {
+        state.undo = null;
+        renderUndoTools(state.leaders);
+      });
+      actions.append(go, cancel);
+      panel.appendChild(actions);
+      return panel;
+    }
+
+    function renderUndoTools(leaders) {
+      const list = document.getElementById("undo-list");
+      list.innerHTML = "";
+      const eliminated = leaders.filter((l) => l.status === "eliminated");
+      const active = leaders.filter((l) => l.status === "active");
+      if (state.undo && !eliminated.some((l) => l.id === state.undo.playerId)) state.undo = null;
+      if (!eliminated.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No eliminated players.";
+        list.appendChild(empty);
+        return;
+      }
+      eliminated.forEach((player) => {
+        const row = document.createElement("div");
+        row.style.cssText = "padding: 0.5rem 0; border-bottom: 1px solid var(--border);";
+        const head = document.createElement("div");
+        head.className = "flex";
+        const name = document.createElement("strong");
+        name.style.flex = "1 1 8rem";
+        name.textContent = player.nickname ? `${player.nickname} (@${player.name})` : player.name;
+        const by = document.createElement("span");
+        by.className = "muted";
+        by.style.flex = "1 1 8rem";
+        by.textContent = player.tagged_by ? `tagged by ${player.tagged_by}` : "tagger unknown";
+        const isOpen = !!state.undo && state.undo.playerId === player.id;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary";
+        btn.textContent = isOpen ? "Close" : "Undo tag";
+        btn.style.cssText = "width: auto; margin: 0;";
+        btn.disabled = !active.length;
+        btn.title = active.length ? "" : "There is nobody in play to insert them next to";
+        btn.addEventListener("click", () => {
+          state.undo = isOpen ? null : { playerId: player.id, mode: null, afterId: null };
+          renderUndoTools(state.leaders);
+        });
+        head.append(name, by, btn);
+        row.appendChild(head);
+        if (isOpen) row.appendChild(buildUndoPanel(player, active));
+        list.appendChild(row);
+      });
+    }
+
+    function renderGameTools(leaders) {
+      renderUndoTools(leaders);
+      const active = leaders.filter((l) => l.status === "active");
+      const inactive = leaders.filter((l) => l.status === "inactive");
+      const count = document.getElementById("init-count");
+      count.textContent = `${leaders.length} player${leaders.length === 1 ? "" : "s"} will be included.`;
+      const list = document.getElementById("inactive-list");
+      const previous = {};
+      list.querySelectorAll("select[data-player]").forEach((sel) => { previous[sel.dataset.player] = sel.value; });
+      list.innerHTML = "";
+      if (!inactive.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No inactive players.";
+        list.appendChild(empty);
+        return;
+      }
+      inactive.forEach((player) => {
+        const row = document.createElement("div");
+        row.className = "flex";
+        row.style.padding = "0.5rem 0";
+        row.style.borderBottom = "1px solid var(--border)";
+        const name = document.createElement("strong");
+        name.style.flex = "1 1 8rem";
+        name.textContent = player.nickname ? `${player.nickname} (@${player.name})` : player.name;
+        const select = document.createElement("select");
+        select.dataset.player = player.id;
+        select.style.flex = "2 1 12rem";
+        select.style.margin = "0";
+        select.setAttribute("aria-label", `Make ${player.name} the target of`);
+        active.forEach((a) => {
+          const opt = document.createElement("option");
+          opt.value = a.id;
+          opt.textContent = `Target of ${a.name} (now targets ${a.target || "nobody"})`;
+          select.appendChild(opt);
+        });
+        if (previous[player.id]) select.value = previous[player.id];
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Insert";
+        btn.style.width = "auto";
+        btn.style.margin = "0";
+        btn.disabled = !active.length;
+        btn.title = active.length ? "" : "Start a game first";
+        btn.addEventListener("click", () => handleInsert(player, select.value));
+        row.append(name, select, btn);
+        list.appendChild(row);
+      });
+    }
+
+    function renderEvent(item) {
+      const li = document.createElement("li");
+      li.style.padding = "0.75rem 0";
+      li.style.borderBottom = "1px solid var(--border)";
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.style.cursor = "pointer";
+      const title = document.createElement("strong");
+      title.textContent = item.title;
+      const time = document.createElement("span");
+      time.className = "muted";
+      const date = new Date(item.created_at);
+      time.textContent = ` · ${Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString()}`;
+      summary.append(title, time);
+      const ul = document.createElement("ul");
+      ul.style.cssText = "margin: 0.5rem 0 0; padding-left: 1.25rem;";
+      item.lines.forEach((line) => {
+        const row = document.createElement("li");
+        row.className = "muted";
+        row.textContent = `To ${line.recipient || "unknown"}: ${line.message}`;
+        ul.appendChild(row);
+      });
+      details.append(summary, ul);
+      li.appendChild(details);
+      return li;
     }
 
     function renderNotifications(list) {
@@ -557,43 +819,47 @@
       }
       empty.classList.add("hidden");
       list.forEach((item) => {
+        if (item.kind === "event") {
+          wrapper.appendChild(renderEvent(item));
+          return;
+        }
         const li = document.createElement("li");
         li.style.padding = "0.75rem 0";
         li.style.borderBottom = "1px solid var(--border)";
-        const heading = document.createElement("div");
-        heading.style.fontWeight = "600";
-        const headerWrap = document.createElement("div");
-        headerWrap.className = "player-cell";
-        const avatar = document.createElement("img");
-        avatar.className = "avatar small";
-        avatar.src = item.tagger_avatar || DEFAULT_AVATAR;
-        avatar.alt = `${item.tagger || "Player"} avatar`;
-        const taggerName = item.tagger_nickname || item.tagger || "Someone";
-        const targetName = item.target ?? "their target";
-        const text = document.createElement("span");
-        text.textContent = `${taggerName} tagged ${targetName}`;
-        headerWrap.append(avatar, text);
-        if (item.tagger_nickname && item.tagger) {
-          const handle = document.createElement("span");
-          handle.className = "small-handle";
-          handle.textContent = `(@${item.tagger})`;
-          headerWrap.appendChild(handle);
+        const isNew = !state.user?.is_admin && item.kind !== "tag" && item.id > state.seenId;
+        if (isNew) {
+          li.style.borderLeft = "3px solid var(--accent)";
+          li.style.paddingLeft = "0.75rem";
+          const fresh = document.createElement("span");
+          fresh.className = "pill";
+          fresh.style.marginLeft = "0";
+          fresh.style.marginRight = "0.5rem";
+          fresh.textContent = "New";
+          li.appendChild(fresh);
         }
-        heading.appendChild(headerWrap);
+        if (item.kind === "global") {
+          const badge = document.createElement("span");
+          badge.className = "pill";
+          badge.style.marginLeft = "0";
+          badge.textContent = "Announcement";
+          li.appendChild(badge);
+        }
+        if (state.user?.is_admin && item.kind !== "global") {
+          const to = document.createElement("div");
+          to.className = "muted";
+          to.textContent = `To ${item.recipient || "unknown"}`;
+          li.appendChild(to);
+        }
         const message = document.createElement("div");
         message.style.marginTop = "0.25rem";
-        if (item.message) {
-          message.textContent = item.message;
-        } else {
-          message.textContent = "(no message)";
-          message.classList.add("muted");
-        }
+        message.style.whiteSpace = "pre-wrap";
+        message.textContent = item.message;
         const time = document.createElement("div");
         time.className = "muted";
         time.style.marginTop = "0.25rem";
         const date = new Date(item.created_at);
         time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString();
-        li.append(heading, message, time);
+        li.append(message, time);
         wrapper.appendChild(li);
       });
     }
@@ -641,6 +907,7 @@
           // ignore json parse errors
         }
         const error = new Error(detail || `Request failed (${res.status})`);
+        error.status = res.status;
         if (typeof cooldownSeconds === "number") {
           error.cooldownSeconds = cooldownSeconds;
         }
@@ -650,45 +917,13 @@
       return res.json();
     }
 
-    function playZap() {
-      const layer = document.getElementById("zap-layer");
-      if (!layer) return;
-      layer.innerHTML = "";
-      layer.classList.add("active");
-
-      const flash = document.createElement("div");
-      flash.className = "zap-flash";
-      layer.appendChild(flash);
-
-      const spawnBolt = () => {
-        const bolt = document.createElement("div");
-        bolt.className = "zap-bolt";
-        const offset = (Math.random() * 200 - 100) + "%";
-        const skew = (Math.random() * 40 - 20) + "deg";
-        bolt.style.setProperty("--bolt-x", offset);
-        bolt.style.setProperty("--bolt-skew", skew);
-        bolt.style.left = Math.random() * 100 + "%";
-        layer.appendChild(bolt);
-        setTimeout(() => bolt.remove(), 700);
-      };
-
-      spawnBolt();
-      const boltTimer = setInterval(spawnBolt, 600);
-
-      setTimeout(() => {
-        clearInterval(boltTimer);
-        layer.classList.remove("active");
-        layer.innerHTML = "";
-      }, 5000);
-    }
-
     async function refreshMe() {
       if (!state.token) return;
       try {
         const me = await api("/me");
         setUser(me);
         toggleSections(true);
-        switchPage(state.currentPage || "tag");
+        if (me.is_admin) await refreshLeaderboard();
       } catch (err) {
         console.warn("Failed to refresh session:", err);
         logout(false);
@@ -696,12 +931,14 @@
     }
 
     async function refreshTarget() {
-      if (!state.token) return;
+      if (!state.token || state.user?.is_admin) return;
       try {
         const res = await api("/target");
         const tgt = document.getElementById("target-name");
         if (!res.target) {
-          tgt.textContent = "No target assigned yet.";
+          const st = state.user?.status;
+          tgt.textContent = st === "eliminated" ? "You have been eliminated."
+            : st === "inactive" ? "You are not in the current game." : "No target assigned yet.";
         } else {
           tgt.textContent = res.target;
         }
@@ -710,19 +947,91 @@
       }
     }
 
+    async function loadLeaderboard() {
+      if (!state.user?.is_admin) return;
+      const { leaders } = await api("/leaderboard");
+      renderLeaderboard(leaders);
+    }
+
     async function refreshLeaderboard() {
       try {
-        const { leaders } = await api("/leaderboard");
-        renderLeaderboard(leaders);
+        await loadLeaderboard();
       } catch (err) {
         showStatus(`Failed to load leaderboard: ${err.message}`, "error");
       }
     }
 
+    async function loadSetup() {
+      try {
+        const { needs_admin } = await api("/setup");
+        document.getElementById("register-card").classList.toggle("hidden", !needs_admin);
+        document.getElementById("auth-section").classList.toggle("two", needs_admin);
+      } catch (err) {
+        // keep the login-only layout
+      }
+    }
+
+    async function loadNotifications() {
+      if (!state.token) {
+        state.unread = 0;
+        renderNotifications([]);
+        updateBadge();
+        return;
+      }
+      const res = await api("/notifications");
+      state.unread = res.unread || 0;
+      state.seenId = res.seen_id || 0;
+      renderNotifications(res.notifications);
+      updateBadge();
+      if (state.currentPage === "notifications") markNotificationsRead();
+    }
+
+    function updateBadge() {
+      const badge = document.getElementById("notif-badge");
+      const show = !state.user?.is_admin && state.unread > 0;
+      badge.classList.toggle("hidden", !show);
+      badge.textContent = state.unread > 9 ? "9+" : String(state.unread);
+      badge.setAttribute("aria-label", `${state.unread} unread`);
+    }
+
+    async function markNotificationsRead() {
+      if (!state.token || state.user?.is_admin || state.unread === 0 || !state.notifications.length) return;
+      const upTo = Math.max(...state.notifications.map((n) => n.id));
+      try {
+        const res = await api("/notifications/read", { method: "POST", body: { up_to: upTo } });
+        state.seenId = res.seen_id;
+        state.unread = 0;
+        updateBadge();
+      } catch (err) {
+        // try again on the next refresh
+      }
+    }
+
+    function applyMe(me) {
+      state.user = Object.assign({}, state.user, me);
+      document.getElementById("player-score").textContent = me.score ?? 0;
+      document.getElementById("player-status").textContent = PLAYER_STATUS[me.status] || "";
+      if (typeof me.cooldown_seconds === "number") setCooldown(me.cooldown_seconds);
+    }
+
+    async function syncSelf() {
+      if (!state.token) return;
+      try {
+        const me = await api("/me");
+        applyMe(me);
+        if (me.is_admin) {
+          await loadLeaderboard();
+        } else {
+          await refreshTarget();
+        }
+      } catch (err) {
+        if (err.status === 401) logout(false);
+      }
+    }
+
     async function refreshNotifications() {
       try {
-        const { notifications } = await api("/notifications");
-        renderNotifications(notifications);
+        await loadNotifications();
       } catch (err) {
         showStatus(`Failed to load notifications: ${err.message}`, "error");
       }
@@ -748,13 +1057,9 @@
       ws.addEventListener("message", (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "leaderboard" && payload.leaders) {
-            renderLeaderboard(payload.leaders);
-          } else if (payload.type === "notifications" && payload.notifications) {
-            renderNotifications(payload.notifications);
-          } else if (payload.type === "notification" && payload.notification) {
-            const updated = [payload.notification, ...state.notifications].slice(0, 50);
-            renderNotifications(updated);
+          if (payload.type === "changed") {
+            loadNotifications().catch(() => {});
+            syncSelf();
           }
         } catch (err) {
           console.error("Invalid WS payload", err);
@@ -802,10 +1107,12 @@
       try {
         const res = await api("/register", { method: "POST", body: data });
         persistToken(res.token);
-        showStatus("Registered successfully!", "success");
+        showStatus("Admin account created.", "success");
+        loadSetup();
         form.reset();
         await refreshMe();
         await refreshTarget();
+        await refreshNotifications();
       } catch (err) {
         showStatus(`Registration failed: ${err.message}`, "error");
       }
@@ -835,6 +1142,7 @@
         form.reset();
         await refreshMe();
         await refreshTarget();
+        await refreshNotifications();
       } catch (err) {
         showStatus(`Login failed: ${err.message}`, "error");
       }
@@ -842,26 +1150,17 @@
 
     async function handleTag() {
       if (!state.token) return;
-      const messageInput = document.getElementById("tag-message");
-      const message = messageInput.value.trim();
-      if (message.length > 280) {
-        showStatus("Message must be 280 characters or less.", "error");
-        return;
-      }
-      const body = message ? { message } : {};
       try {
-        const res = await api("/tag", { method: "POST", body });
+        const res = await api("/tag", { method: "POST" });
         document.getElementById("player-score").textContent = res.score;
         document.getElementById("target-name").textContent = res.new_target || "No target assigned.";
         if (res.notification) {
           const updated = [res.notification, ...state.notifications].slice(0, 50);
           renderNotifications(updated);
         }
-        messageInput.value = "";
         if (typeof res.cooldown_seconds === "number") {
           setCooldown(res.cooldown_seconds);
         }
-        playZap();
         showStatus("Tag recorded!", "success");
       } catch (err) {
         if (typeof err.cooldownSeconds === "number") {
@@ -929,35 +1228,112 @@
 
     async function handleInit(event) {
       event.preventDefault();
-      const namesRaw = document.getElementById("init-names").value
-        .split(/\r?\n/)
-        .map(v => v.trim())
-        .filter(Boolean);
       const shuffle = document.getElementById("init-shuffle").checked;
-      if (namesRaw.length < 2) {
-        showStatus("Need at least two players", "error");
+      const count = state.leaders.length;
+      if (count < 2) {
+        showStatus("Need at least two players. Create accounts in the Register tab first.", "error");
         return;
       }
+      if (!confirm(`Start a new game with ${count} players? This resets every score and target.`)) return;
       try {
-        await api("/admin/init", {
-          method: "POST",
-          body: { players: namesRaw, shuffle },
-        });
-        showStatus("Game initialized!", "success");
-        document.getElementById("mapping-view").classList.add("hidden");
-        await refreshTarget();
+        await api("/admin/init", { method: "POST", body: { shuffle } });
+        showStatus("Game started!", "success");
         await refreshLeaderboard();
       } catch (err) {
-        showStatus(`Failed to initialize: ${err.message}`, "error");
+        showStatus(`Failed to start the game: ${err.message}`, "error");
       }
     }
 
-    async function handleLoadMapping() {
+    async function handleUndo(player) {
+      const st = state.undo;
+      if (!st) return;
+      const body = { player_id: player.id, mode: st.mode };
+      if (st.mode === "insert") body.after_id = Number(st.afterId);
       try {
-        const res = await api("/admin/mapping");
-        renderMapping(res.mapping);
+        await api("/admin/undo-tag", { method: "POST", body });
+        state.undo = null;
+        showStatus(`${player.name} is back in the game.`, "success");
+        await refreshLeaderboard();
       } catch (err) {
-        showStatus(`Failed to load mapping: ${err.message}`, "error");
+        showStatus(`Failed to undo the tag: ${err.message}`, "error");
+      }
+    }
+
+    async function handleInsert(player, afterId) {
+      if (!afterId) return;
+      try {
+        await api("/admin/insert", { method: "POST", body: { player_id: player.id, after_id: Number(afterId) } });
+        showStatus(`${player.name} is now in the game.`, "success");
+        await refreshLeaderboard();
+      } catch (err) {
+        showStatus(`Failed to insert player: ${err.message}`, "error");
+      }
+    }
+
+    async function handleWipe(event) {
+      event.preventDefault();
+      const input = document.getElementById("wipe-secret");
+      const secret = input.value;
+      if (!secret) {
+        showStatus("Enter the admin secret to wipe the database.", "error");
+        return;
+      }
+      if (!confirm("Wipe the database? This deletes every account, notification and avatar, including yours. It cannot be undone.")) return;
+      try {
+        await api("/admin/wipe", { method: "POST", body: { admin_secret: secret } });
+        input.value = "";
+        logout(false);
+        await loadSetup();
+        showStatus("Database wiped. Create a new first admin to start over.", "success");
+      } catch (err) {
+        showStatus(`Wipe failed: ${err.message}`, "error");
+      }
+    }
+
+    async function handleAnnounce(event) {
+      event.preventDefault();
+      const input = document.getElementById("announce-message");
+      const message = input.value.trim();
+      if (!message) {
+        showStatus("Write a message first.", "error");
+        return;
+      }
+      try {
+        await api("/admin/announce", { method: "POST", body: { message } });
+        input.value = "";
+        showStatus("Announcement sent to all players.", "success");
+        await refreshNotifications();
+      } catch (err) {
+        showStatus(`Failed to send announcement: ${err.message}`, "error");
+      }
+    }
+
+    function randomPassword(len = 10) {
+      const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bytes = new Uint32Array(len);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+    }
+
+    async function handleCreateUser(event) {
+      event.preventDefault();
+      const name = document.getElementById("create-name").value.trim();
+      const password = document.getElementById("create-password").value;
+      const isAdmin = document.getElementById("create-role").value === "admin";
+      if (!name) {
+        showStatus("Name is required", "error");
+        return;
+      }
+      if (password.length < 6 || password.length > 72) {
+        showStatus("Password must be 6-72 characters.", "error");
+        return;
+      }
+      try {
+        await api("/admin/users", { method: "POST", body: { name, password, is_admin: isAdmin } });
+        showStatus(`Created ${isAdmin ? "admin" : "player"} '${name}'. Password: ${password}`, "success");
+        event.target.reset();
+      } catch (err) {
+        showStatus(`Failed to create account: ${err.message}`, "error");
       }
     }
 
@@ -967,7 +1343,6 @@
       toggleSections(false);
       document.getElementById("target-name").textContent = "No target yet.";
       renderNotifications([]);
-      document.getElementById("tag-message").value = "";
       document.getElementById("player-name").textContent = "";
       document.getElementById("player-handle").textContent = "";
       const avatarInput = document.getElementById("avatar-input");
@@ -978,6 +1353,9 @@
       if (nicknameInput) {
         nicknameInput.value = "";
       }
+      state.unread = 0;
+      state.seenId = 0;
+      updateBadge();
       renderLeaderboard([]);
       switchPage("tag");
       if (notify) {
@@ -993,7 +1371,12 @@
       document.getElementById("tag-btn").addEventListener("click", handleTag);
       document.getElementById("refresh-notifications").addEventListener("click", refreshNotifications);
       document.getElementById("init-form").addEventListener("submit", handleInit);
-      document.getElementById("load-mapping").addEventListener("click", handleLoadMapping);
+      document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
+      document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
+      document.getElementById("wipe-form").addEventListener("submit", handleWipe);
+      document.getElementById("generate-password").addEventListener("click", () => {
+        document.getElementById("create-password").value = randomPassword();
+      });
       document.getElementById("refresh-leaderboard").addEventListener("click", refreshLeaderboard);
       document.getElementById("logout-btn").addEventListener("click", () => logout(true));
       document.getElementById("upload-avatar-btn").addEventListener("click", handleAvatarUpload);
@@ -1008,7 +1391,7 @@
         refreshMe().then(refreshTarget);
       }
       switchPage("tag");
-      refreshLeaderboard();
+      loadSetup();
       refreshNotifications();
       connectLeaderboardSocket();
     }
