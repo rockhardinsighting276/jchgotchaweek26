@@ -1,5 +1,5 @@
 # python-fastapi/models.py
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, create_engine, text, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, create_engine, text, DateTime, Text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy import inspect
 import os
@@ -161,3 +161,14 @@ def ensure_game_columns():
 
 
 ensure_game_columns()
+
+
+class Setting(Base):
+    """Small key/value store; currently just the rules text."""
+    __tablename__ = "settings"
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+Base.metadata.create_all(bind=engine)

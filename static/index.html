@@ -226,6 +226,7 @@
         <button type="button" class="tab" data-page="leaderboard" data-role="admin">Leaderboard</button>
         <button type="button" class="tab" data-page="game" data-role="admin">Game</button>
         <button type="button" class="tab" data-page="notifications">Notifications<span id="notif-badge" class="badge hidden"></span></button>
+        <button type="button" class="tab" data-page="rules">Rules</button>
         <button type="button" class="tab" data-page="register" data-role="admin">Register</button>
         <button type="button" id="logout-btn" class="secondary" style="margin: 0 0 0.4rem auto; width: auto; padding: 0.4rem 0.9rem;">Log out</button>
       </nav>
@@ -342,6 +343,29 @@
           <ul id="notifications-list" style="list-style: none; padding: 0; margin: 0;"></ul>
         </div>
       </div>
+      <div id="page-rules" class="page hidden">
+        <div class="card">
+          <div class="flex" style="justify-content: space-between;">
+            <h2 style="margin: 0;">Rules</h2>
+            <button type="button" id="edit-rules-btn" class="secondary hidden" style="width: auto; margin: 0;">Edit rules</button>
+          </div>
+          <p class="muted" id="rules-updated" style="margin: 0.25rem 0 1rem;"></p>
+          <div id="rules-body"></div>
+          <form id="rules-form" class="hidden">
+            <label for="rules-text">Rules text. Start each numbered rule on its own line, like "1. ..."</label>
+            <textarea id="rules-text" style="min-height: 24rem;"></textarea>
+            <label class="flex" style="gap: 0.35rem; margin-bottom: 0.75rem;">
+              <input type="checkbox" id="rules-notify" checked>
+              Notify all players that the rules changed
+            </label>
+            <div class="flex">
+              <button type="submit" style="width: auto; margin: 0;">Save rules</button>
+              <button type="button" id="rules-cancel" class="secondary" style="width: auto; margin: 0;">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <div id="page-register" class="page hidden">
         <div class="card">
           <h2 style="margin-top: 0;">Create account</h2>
@@ -378,6 +402,7 @@
       notifications: [],
       unread: 0,
       undo: null,
+      rules: null,
       seenId: 0,
       currentPage: "tag",
       cooldownSeconds: 0,
@@ -406,7 +431,7 @@
       document.getElementById("game-section").classList.toggle("hidden", !loggedIn);
     }
 
-    const PAGES = { player: ["tag", "notifications"], admin: ["leaderboard", "game", "notifications", "register"] };
+    const PAGES = { player: ["tag", "notifications", "rules"], admin: ["leaderboard", "game", "notifications", "rules", "register"] };
     const STATUS_LABELS = { active: "Active", inactive: "Inactive", eliminated: "Eliminated" };
     function ordinal(n) {
       const v = n % 100;
@@ -422,6 +447,7 @@
         tab.classList.toggle("hidden", (role === "admin" && !isAdmin) || (role === "player" && isAdmin));
       });
       document.getElementById("announce-card").classList.toggle("hidden", !isAdmin);
+      document.getElementById("edit-rules-btn").classList.toggle("hidden", !isAdmin || !document.getElementById("rules-form").classList.contains("hidden"));
       document.getElementById("notifications-title").textContent = isAdmin ? "All notifications" : "Notifications";
       if (user) {
         const allowed = isAdmin ? PAGES.admin : PAGES.player;
@@ -467,6 +493,7 @@
         el.classList.toggle("hidden", el.id !== `page-${page}`);
       });
       if (page === "notifications") markNotificationsRead();
+      if (page === "rules") loadRules().catch((err) => showStatus(`Failed to load the rules: ${err.message}`, "error"));
     }
 
     function updateCooldownDisplay() {
@@ -1059,6 +1086,7 @@
           const payload = JSON.parse(event.data);
           if (payload.type === "changed") {
             loadNotifications().catch(() => {});
+            if (state.currentPage === "rules") loadRules().catch(() => {});
             syncSelf();
           }
         } catch (err) {
@@ -1290,6 +1318,73 @@
       }
     }
 
+    function renderRules(rules) {
+      state.rules = rules;
+      const body = document.getElementById("rules-body");
+      body.innerHTML = "";
+      rules.text.split("\n").forEach((line) => {
+        if (!line.trim()) return;
+        const m = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+        if (m) {
+          const row = document.createElement("div");
+          row.className = "rule-row";
+          row.style.cssText = "display: flex; gap: 0.6rem; margin: 0.6rem 0;";
+          const num = document.createElement("strong");
+          num.style.cssText = "min-width: 1.75rem; text-align: right; flex: none;";
+          num.textContent = `${m[1]}.`;
+          const text = document.createElement("span");
+          text.style.flex = "1";
+          text.textContent = m[2];
+          row.append(num, text);
+          body.appendChild(row);
+        } else {
+          const para = document.createElement("p");
+          para.style.margin = "0 0 1rem";
+          para.textContent = line.trim();
+          body.appendChild(para);
+        }
+      });
+      const date = rules.updated_at ? new Date(rules.updated_at) : null;
+      document.getElementById("rules-updated").textContent =
+        date && !Number.isNaN(date.getTime()) ? `Last updated ${date.toLocaleString()}` : "";
+    }
+
+    async function loadRules() {
+      if (!state.token) return;
+      renderRules(await api("/rules"));
+    }
+
+    function openRulesEditor() {
+      if (!state.rules) return;
+      document.getElementById("rules-text").value = state.rules.text;
+      document.getElementById("rules-form").classList.remove("hidden");
+      document.getElementById("rules-body").classList.add("hidden");
+      document.getElementById("edit-rules-btn").classList.add("hidden");
+    }
+
+    function closeRulesEditor() {
+      document.getElementById("rules-form").classList.add("hidden");
+      document.getElementById("rules-body").classList.remove("hidden");
+      document.getElementById("edit-rules-btn").classList.toggle("hidden", !state.user?.is_admin);
+    }
+
+    async function handleSaveRules(event) {
+      event.preventDefault();
+      const text = document.getElementById("rules-text").value;
+      if (!text.trim()) {
+        showStatus("The rules can't be empty.", "error");
+        return;
+      }
+      try {
+        await api("/admin/rules", { method: "PUT", body: { text, notify: document.getElementById("rules-notify").checked } });
+        closeRulesEditor();
+        await loadRules();
+        showStatus("Rules updated.", "success");
+      } catch (err) {
+        showStatus(`Failed to save the rules: ${err.message}`, "error");
+      }
+    }
+
     async function handleAnnounce(event) {
       event.preventDefault();
       const input = document.getElementById("announce-message");
@@ -1356,6 +1451,10 @@
       state.unread = 0;
       state.seenId = 0;
       updateBadge();
+      state.rules = null;
+      document.getElementById("rules-body").innerHTML = "";
+      document.getElementById("rules-form").classList.add("hidden");
+      document.getElementById("rules-body").classList.remove("hidden");
       renderLeaderboard([]);
       switchPage("tag");
       if (notify) {
@@ -1374,6 +1473,9 @@
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
       document.getElementById("wipe-form").addEventListener("submit", handleWipe);
+      document.getElementById("edit-rules-btn").addEventListener("click", openRulesEditor);
+      document.getElementById("rules-cancel").addEventListener("click", closeRulesEditor);
+      document.getElementById("rules-form").addEventListener("submit", handleSaveRules);
       document.getElementById("generate-password").addEventListener("click", () => {
         document.getElementById("create-password").value = randomPassword();
       });

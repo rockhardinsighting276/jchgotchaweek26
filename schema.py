@@ -56,3 +56,8 @@ class UndoIn(BaseModel):
     player_id: int
     mode: str                      # "tagger_place" or "insert"
     after_id: int | None = None    # required for mode "insert"
+
+
+class RulesIn(BaseModel):
+    text: str
+    notify: bool = True

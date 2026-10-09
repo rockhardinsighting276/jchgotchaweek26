@@ -9,8 +9,9 @@ import uuid
 from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
-from models import SessionLocal, Player, Notification
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn
+from models import SessionLocal, Player, Notification, Setting
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn
+from rules import DEFAULT_RULES
 from game import init_circle, insert_player, undo_tag, do_tag, mint_token
 
 app = FastAPI()
@@ -537,3 +538,41 @@ async def admin_wipe(body: WipeIn, p: Player = Depends(auth_player), db: Session
                 pass
     await notify_changed()
     return {"ok": True}
+
+
+RULES_KEY = "rules"
+
+
+@app.get("/rules")
+def get_rules(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    row = db.get(Setting, RULES_KEY)
+    return {
+        "text": row.value if row else DEFAULT_RULES,
+        "updated_at": (row.updated_at.isoformat() + "Z") if row else None,
+    }
+
+
+@app.put("/admin/rules")
+async def update_rules(body: RulesIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    rules_text = body.text.strip()
+    if not rules_text:
+        raise HTTPException(400, "The rules can't be empty")
+    if len(rules_text) > 20000:
+        raise HTTPException(400, "Rules too long (max 20000 characters)")
+    now = datetime.utcnow()
+    row = db.get(Setting, RULES_KEY)
+    if row:
+        row.value = rules_text
+        row.updated_at = now
+    else:
+        db.add(Setting(key=RULES_KEY, value=rules_text, updated_at=now))
+    if body.notify:
+        db.add(Notification(
+            kind="global", recipient_id=None, tagger_id=p.id, created_at=now,
+            message="The rules have been updated. Check the Rules tab for the latest version.",
+        ))
+    db.commit()
+    await notify_changed()
+    return {"ok": True, "updated_at": now.isoformat() + "Z"}
