@@ -36,7 +36,6 @@ class AnnounceIn(BaseModel):
 class CreateUserIn(BaseModel):
     name: str
     password: str
-    is_admin: bool = False
 
 
 class InsertIn(BaseModel):
@@ -61,3 +60,7 @@ class UndoIn(BaseModel):
 class RulesIn(BaseModel):
     text: str
     notify: bool = True
+
+
+class WithdrawIn(BaseModel):
+    password: str

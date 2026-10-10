@@ -10,7 +10,7 @@ from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification, Setting
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn, WithdrawIn
 from rules import DEFAULT_RULES
 from game import init_circle, insert_player, undo_tag, delete_player, do_tag, mint_token
 
@@ -370,6 +370,15 @@ def group_events(notes):
         if grp[0].kind == "global":
             items.append(grp[0].public(include_recipient=True))
             continue
+        if grp[0].kind == "withdraw":
+            items.append({
+                "id": grp[0].id,
+                "kind": "urgent",
+                "title": grp[0].event or "Withdrawal request",
+                "message": grp[0].message,
+                "created_at": grp[0].created_at.isoformat() + "Z",
+            })
+            continue
         title = next((n.event for n in grp if n.event), None)
         if title is None:  # rows written before events had titles
             tag = next((n for n in grp if n.kind == "tag"), None)
@@ -409,7 +418,10 @@ def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db
     )
     seen = p.notif_seen_id or 0
     unread = 0
-    if not p.is_admin:
+    if p.is_admin:
+        # admins are only pinged about urgent items (withdrawal requests)
+        unread = visible_notes(db, p).filter(Notification.id > seen, Notification.kind == "withdraw").count()
+    else:
         # a player's own "you tagged X" confirmation never counts as unread
         unread = visible_notes(db, p).filter(Notification.id > seen, Notification.kind != "tag").count()
     return {
@@ -512,7 +524,7 @@ def admin_create_user(body: CreateUserIn, p: Player = Depends(auth_player), db: 
     player = Player(
         name=name,
         token=mint_token(),
-        is_admin=body.is_admin,
+        is_admin=False,  # every admin shares the one account created at first setup
         active=False,  # accounts start out of the game until an admin starts it or inserts them
         password_hash=hash_password(body.password),
         score_last_updated=datetime.utcnow(),
@@ -598,3 +610,28 @@ async def update_rules(body: RulesIn, p: Player = Depends(auth_player), db: Sess
     db.commit()
     await notify_changed()
     return {"ok": True, "updated_at": now.isoformat() + "Z"}
+
+
+@app.post("/me/withdraw")
+async def withdraw(body: WithdrawIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    """A player asks to leave the game. Admins get an urgent notification and decide what to do."""
+    if p.is_admin:
+        raise HTTPException(403, "Admins can't withdraw from the game")
+    if not verify_password(body.password, p.password_hash):
+        raise HTTPException(403, "Incorrect password")
+    now = datetime.utcnow()
+    recent = (
+        db.query(Notification)
+        .filter(Notification.kind == "withdraw", Notification.tagger_id == p.id,
+                Notification.created_at > now - timedelta(minutes=30))
+        .first()
+    )
+    if not recent:  # don't let repeated presses flood the admins
+        db.add(Notification(
+            kind="withdraw", recipient_id=None, tagger_id=p.id, created_at=now,
+            event=f"Withdrawal Request: {p.name}",
+            message=f"URGENT: '{p.name}' wishes to withdraw from the game (currently {p.status()}).",
+        ))
+        db.commit()
+        await notify_changed()
+    return {"ok": True}
