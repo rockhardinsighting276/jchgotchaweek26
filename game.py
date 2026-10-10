@@ -221,3 +221,40 @@ def undo_tag(db: Session, admin: Player, player: Player, mode: str, anchor: Play
     db.refresh(player)
     db.refresh(anchor)
     return player, anchor
+
+
+def delete_player(db: Session, admin: Player, player: Player):
+    """Remove a player from the database, keeping the loop intact.
+
+    If they were in play, the player hunting them inherits their target (hunter -> player -> next
+    becomes hunter -> next). Only that hunter is notified. Returns the avatar path so the caller
+    can delete the file.
+    """
+    if player.is_admin:
+        raise ValueError("Admin accounts can't be deleted here")
+
+    now = datetime.utcnow()
+    if player.active:
+        hunter = (
+            db.query(Player)
+            .filter(Player.active == True, Player.is_admin == False, Player.target_id == player.id, Player.id != player.id)
+            .first()
+        )
+        nxt = db.get(Player, player.target_id) if player.target_id else None
+        if hunter is not None:
+            event = f"Player Removed: {player.name}"
+            if nxt is None or not nxt.active or nxt.id == hunter.id:
+                hunter.target_id = None
+                msg = f"Your target '{player.name}' has been removed from the game and no other players remain."
+            else:
+                hunter.target_id = nxt.id
+                msg = f"Your target '{player.name}' has been removed from the game. Your new target is '{nxt.name}'."
+            _notify(db, admin, hunter, msg, now, event)
+
+    # players they had tagged out lose the "tagged by" link; their own private notifications go with them
+    db.query(Player).filter(Player.eliminated_by_id == player.id).update({Player.eliminated_by_id: None})
+    db.query(Notification).filter(Notification.recipient_id == player.id).delete()
+    avatar = player.avatar_path
+    db.delete(player)
+    db.commit()
+    return avatar

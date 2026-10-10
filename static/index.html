@@ -21,6 +21,7 @@
       --accent: #0f766e; --accent-hover: #0b5e57; --accent-ink: #ffffff;
       --accent-soft: rgba(15, 118, 110, 0.12);
       --danger: #c4271d; --danger-hover: #a11f17;
+      --success: #1a7f45; --success-hover: #15683a; --success-ink: #ffffff;
       --info-bg: #e3eef5; --info-text: #17415c;
       --err-bg: #fbe4e2; --err-text: #9b1c14;
       --ok-bg: #dcf1e4; --ok-text: #14532d;
@@ -34,6 +35,7 @@
       --accent: #2dd4bf; --accent-hover: #5eead4; --accent-ink: #06201d;
       --accent-soft: rgba(45, 212, 191, 0.14);
       --danger: #d93a2f; --danger-hover: #bf2f25;
+      --success: #34c27a; --success-hover: #5ad596; --success-ink: #06210f;
       --info-bg: #17303d; --info-text: #b5dcf2;
       --err-bg: #3a1a18; --err-text: #ffb4ad;
       --ok-bg: #16301f; --ok-text: #a7e8bd;
@@ -153,10 +155,12 @@
     }
     button.secondary { background: var(--surface-2); color: var(--text); border-color: var(--border); }
     button.danger { background: var(--danger); color: #fff; }
+    button.success { background: var(--success); color: var(--success-ink); }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
     button:hover:not(:disabled) { background: var(--accent-hover); }
     button.secondary:hover:not(:disabled) { background: var(--surface); border-color: var(--accent); }
     button.danger:hover:not(:disabled) { background: var(--danger-hover); }
+    button.success:hover:not(:disabled) { background: var(--success-hover); }
     .hidden { display: none !important; }
     .status { margin: 1rem 0; padding: 0.75rem 1rem; border-radius: 10px; background: var(--info-bg); color: var(--info-text); }
     .status.error { background: var(--err-bg); color: var(--err-text); }
@@ -197,7 +201,7 @@
     <section id="auth-section" class="grid">
       <div class="card hidden" id="register-card">
         <h2>Create the first admin</h2>
-        <p class="muted">Registration closes once an admin exists. After that, admins create accounts from the Register tab.</p>
+        <p class="muted">Registration closes once an admin exists. After that, admins create accounts from the Player Management tab.</p>
         <form id="register-form">
           <label for="register-name">Name</label>
           <input id="register-name" name="name" placeholder="Player name" required>
@@ -227,7 +231,7 @@
         <button type="button" class="tab" data-page="game" data-role="admin">Game</button>
         <button type="button" class="tab" data-page="notifications">Notifications<span id="notif-badge" class="badge hidden"></span></button>
         <button type="button" class="tab" data-page="rules">Rules</button>
-        <button type="button" class="tab" data-page="register" data-role="admin">Register</button>
+        <button type="button" class="tab" data-page="players" data-role="admin">Player Management</button>
         <button type="button" id="logout-btn" class="secondary" style="margin: 0 0 0.4rem auto; width: auto; padding: 0.4rem 0.9rem;">Log out</button>
       </nav>
 
@@ -261,6 +265,14 @@
               <span id="target-name">No target yet.</span>
             </p>
             <button type="button" id="tag-btn">Tag Successful</button>
+            <div id="tag-confirm" class="hidden" role="alertdialog" aria-labelledby="tag-confirm-title" style="margin-top: 0.75rem; padding: 0.9rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);">
+              <strong id="tag-confirm-title" style="display: block; margin-bottom: 0.25rem;">Are you sure?</strong>
+              <p class="muted" style="margin: 0 0 0.75rem;">Only confirm if you have tagged <strong id="tag-confirm-target"></strong>.</p>
+              <div class="flex">
+                <button type="button" id="tag-confirm-yes" style="width: auto; margin: 0;">Yes, I tagged them</button>
+                <button type="button" id="tag-confirm-no" class="secondary" style="width: auto; margin: 0;">Cancel</button>
+              </div>
+            </div>
             <div class="muted" style="margin-top: 0.5rem;">
               Next tag available in: <span id="tag-cooldown">Ready</span>
             </div>
@@ -287,10 +299,10 @@
       </div>
 
       <div id="page-game" class="page hidden">
-        <div class="grid">
-          <div class="card">
-            <h2 style="margin-top: 0;">Start / reset game</h2>
-            <p class="muted">Starts a new game with every non-admin player in one circle and resets all scores. Each player is told their first target.</p>
+        <div class="grid" id="game-grid">
+          <div class="card" id="start-card">
+            <h2 id="start-title" style="margin-top: 0;">Start game</h2>
+            <p class="muted" id="start-desc"></p>
             <form id="init-form">
               <div class="flex" style="margin-bottom: 0.75rem;">
                 <label class="flex" style="gap: 0.35rem; margin: 0;">
@@ -299,27 +311,13 @@
                 </label>
                 <span class="muted" id="init-count"></span>
               </div>
-              <button type="submit" class="danger">Start / Reset Game</button>
+              <button type="submit" id="init-btn" class="success">Start Game</button>
             </form>
           </div>
-          <div class="card">
-            <h2 style="margin-top: 0;">Inactive players</h2>
-            <p class="muted">Players who are not in the current game, such as accounts added after it started. Pick the player they will become the target of. They then take over that player's old target, so the loop stays intact. Only those two players are notified.</p>
-            <div id="inactive-list"></div>
-          </div>
-          <div class="card">
+          <div class="card" id="undo-card">
             <h2 style="margin-top: 0;">Undo a tag</h2>
             <p class="muted">If a dispute is upheld, bring an eliminated player back. The tagger's point is removed. Only the restored player, the player whose target changes and the tagger are notified.</p>
             <div id="undo-list"></div>
-          </div>
-          <div class="card" style="border-color: var(--danger);">
-            <h2 style="margin-top: 0;">Danger zone</h2>
-            <p class="muted">Wipes every account (including yours), all notifications and uploaded avatars. You will be logged out and first-admin setup will appear again.</p>
-            <form id="wipe-form">
-              <label for="wipe-secret">Admin secret</label>
-              <input id="wipe-secret" type="password" autocomplete="off" required>
-              <button type="submit" class="danger">Wipe database</button>
-            </form>
           </div>
         </div>
       </div>
@@ -366,25 +364,49 @@
         </div>
       </div>
 
-      <div id="page-register" class="page hidden">
-        <div class="card">
-          <h2 style="margin-top: 0;">Create account</h2>
-          <p class="muted">Players log in with the name and password you set here. Share the password with them privately.</p>
-          <form id="create-user-form">
-            <label for="create-name">Name</label>
-            <input id="create-name" placeholder="Player name" autocomplete="off" required>
-            <label for="create-password">Password <span class="muted">(6-72 chars)</span></label>
-            <div style="display: flex; gap: 0.5rem;">
-              <input id="create-password" type="text" minlength="6" maxlength="72" autocomplete="off" required>
-              <button type="button" id="generate-password" class="secondary" style="width: auto; white-space: nowrap;">Generate</button>
+      <div id="page-players" class="page hidden">
+        <div class="grid">
+          <div class="card">
+            <h2 style="margin-top: 0;">Create account</h2>
+            <p class="muted">Players log in with the name and password you set here. Share the password with them privately.</p>
+            <form id="create-user-form">
+              <label for="create-name">Name</label>
+              <input id="create-name" placeholder="Player name" autocomplete="off" required>
+              <label for="create-password">Password <span class="muted">(6-72 chars)</span></label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input id="create-password" type="text" minlength="6" maxlength="72" autocomplete="off" required>
+                <button type="button" id="generate-password" class="secondary" style="width: auto; white-space: nowrap;">Generate</button>
+              </div>
+              <label for="create-role">Account type</label>
+              <select id="create-role">
+                <option value="player">Player</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button type="submit">Create account</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2 style="margin-top: 0;">Inactive players</h2>
+            <p class="muted">Players who are not in the current game, such as accounts added after it started. Pick the player they will become the target of. They then take over that player's old target, so the loop stays intact. Only those two players are notified.</p>
+            <div id="inactive-list"></div>
+          </div>
+          <div class="card" style="border-color: var(--danger);">
+            <h2 style="margin-top: 0;">Danger zone</h2>
+            <h3 style="margin: 1rem 0 0.25rem;">Delete a player</h3>
+            <p class="muted" style="margin-top: 0;">Permanently removes a player's account, notifications and avatar. If they are in the game, the player hunting them takes over their target and is told. This can't be undone.</p>
+            <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
+              <select id="delete-select" aria-label="Player to delete"></select>
+              <button type="button" id="delete-btn" class="danger" style="width: auto; white-space: nowrap;" disabled>Delete player</button>
             </div>
-            <label for="create-role">Account type</label>
-            <select id="create-role">
-              <option value="player">Player</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button type="submit">Create account</button>
-          </form>
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 1rem 0;">
+            <h3 style="margin: 0 0 0.25rem;">Wipe the database</h3>
+            <p class="muted" style="margin-top: 0;">Wipes every account (including yours), all notifications and uploaded avatars. You will be logged out and first-admin setup will appear again. The rules are kept.</p>
+            <form id="wipe-form">
+              <label for="wipe-secret">Admin secret</label>
+              <input id="wipe-secret" type="password" autocomplete="off" required>
+              <button type="submit" class="danger">Wipe database</button>
+            </form>
+          </div>
         </div>
       </div>
     </section>
@@ -431,7 +453,7 @@
       document.getElementById("game-section").classList.toggle("hidden", !loggedIn);
     }
 
-    const PAGES = { player: ["tag", "notifications", "rules"], admin: ["leaderboard", "game", "notifications", "rules", "register"] };
+    const PAGES = { player: ["tag", "notifications", "rules"], admin: ["leaderboard", "game", "notifications", "rules", "players"] };
     const STATUS_LABELS = { active: "Active", inactive: "Inactive", eliminated: "Eliminated" };
     function ordinal(n) {
       const v = n % 100;
@@ -503,6 +525,7 @@
       const inPlay = !state.user || state.user.active !== false;
       if (!inPlay) {
         label.textContent = state.user.status === "eliminated" ? "Eliminated" : "Not in the game";
+        hideTagConfirm();
         button.disabled = true;
         return;
       }
@@ -558,7 +581,7 @@
         const row = document.createElement("tr");
         const cell = document.createElement("td");
         cell.colSpan = 6;
-        cell.textContent = "No players yet. Create accounts in the Register tab, then start a game.";
+        cell.textContent = "No players yet. Create accounts in the Player Management tab, then start a game.";
         row.appendChild(cell);
         tbody.appendChild(row);
         return;
@@ -760,6 +783,8 @@
 
     function renderGameTools(leaders) {
       renderUndoTools(leaders);
+      renderStartCard(leaders);
+      renderDeleteTool(leaders);
       const active = leaders.filter((l) => l.status === "active");
       const inactive = leaders.filter((l) => l.status === "inactive");
       const count = document.getElementById("init-count");
@@ -1259,10 +1284,15 @@
       const shuffle = document.getElementById("init-shuffle").checked;
       const count = state.leaders.length;
       if (count < 2) {
-        showStatus("Need at least two players. Create accounts in the Register tab first.", "error");
+        showStatus("Need at least two players. Create accounts in the Player Management tab first.", "error");
         return;
       }
-      if (!confirm(`Start a new game with ${count} players? This resets every score and target.`)) return;
+      const warning = state.gameRunning
+        ? `Reset the game? Every score, placement and target will be cleared and ${count} players will be put into a new circle. This can't be undone.`
+        : state.gameFinished
+          ? `Start a new game with ${count} players? The finished game's results and placements will be cleared.`
+          : `Start a new game with ${count} players?`;
+      if (!confirm(warning)) return;
       try {
         await api("/admin/init", { method: "POST", body: { shuffle } });
         showStatus("Game started!", "success");
@@ -1284,6 +1314,84 @@
         await refreshLeaderboard();
       } catch (err) {
         showStatus(`Failed to undo the tag: ${err.message}`, "error");
+      }
+    }
+
+    function showTagConfirm() {
+      const btn = document.getElementById("tag-btn");
+      if (!state.token || btn.disabled) return;
+      document.getElementById("tag-confirm-target").textContent = document.getElementById("target-name").textContent;
+      document.getElementById("tag-confirm").classList.remove("hidden");
+      btn.classList.add("hidden");
+    }
+
+    function hideTagConfirm() {
+      document.getElementById("tag-confirm").classList.add("hidden");
+      document.getElementById("tag-btn").classList.remove("hidden");
+    }
+
+    async function confirmTag() {
+      hideTagConfirm();
+      await handleTag();
+    }
+
+    // A running game puts the reset card (red) at the bottom of the Game tab; otherwise the start card (green) leads.
+    function renderStartCard(leaders) {
+      const active = leaders.filter((l) => l.status === "active").length;
+      const running = active >= 2;
+      state.gameRunning = running;
+      state.gameFinished = active === 1 && leaders.some((l) => l.status === "eliminated");
+      const grid = document.getElementById("game-grid");
+      const card = document.getElementById("start-card");
+      const btn = document.getElementById("init-btn");
+      document.getElementById("start-title").textContent = running ? "Reset game" : "Start game";
+      document.getElementById("start-desc").textContent = running
+        ? "A game is in progress. Resetting clears every score, placement and target, then starts a fresh game with every non-admin player."
+        : state.gameFinished
+          ? "The last game has finished. Starting a new one clears its results and begins a fresh game with every non-admin player."
+          : "Starts a new game with every non-admin player in one circle. Each player is told their first target.";
+      btn.textContent = running ? "Reset Game" : "Start Game";
+      btn.classList.toggle("danger", running);
+      btn.classList.toggle("success", !running);
+      if (running && grid.lastElementChild !== card) grid.appendChild(card);
+      if (!running && grid.firstElementChild !== card) grid.insertBefore(card, grid.firstElementChild);
+    }
+
+    function renderDeleteTool(leaders) {
+      const select = document.getElementById("delete-select");
+      const previous = select.value;
+      select.innerHTML = "";
+      select.style.margin = "0";
+      const first = document.createElement("option");
+      first.value = "";
+      first.textContent = leaders.length ? "Choose a player..." : "No players";
+      select.appendChild(first);
+      leaders.forEach((l) => {
+        const opt = document.createElement("option");
+        opt.value = l.id;
+        opt.textContent = `${l.name} (${STATUS_LABELS[l.status] || l.status})`;
+        select.appendChild(opt);
+      });
+      if (previous && [...select.options].some((o) => o.value === previous)) select.value = previous;
+      updateDeleteButton();
+    }
+
+    function updateDeleteButton() {
+      document.getElementById("delete-btn").disabled = !document.getElementById("delete-select").value;
+    }
+
+    async function handleDeletePlayer() {
+      const id = Number(document.getElementById("delete-select").value);
+      const player = state.leaders.find((l) => l.id === id);
+      if (!player) return;
+      const inLoop = player.status === "active" ? " The player hunting them takes over their target." : "";
+      if (!confirm(`Delete '${player.name}' from the database? This permanently removes their account, notifications and avatar.${inLoop} This can't be undone.`)) return;
+      try {
+        await api(`/admin/players/${id}`, { method: "DELETE" });
+        showStatus(`${player.name} was deleted.`, "success");
+        await refreshLeaderboard();
+      } catch (err) {
+        showStatus(`Failed to delete the player: ${err.message}`, "error");
       }
     }
 
@@ -1451,6 +1559,7 @@
       state.unread = 0;
       state.seenId = 0;
       updateBadge();
+      hideTagConfirm();
       state.rules = null;
       document.getElementById("rules-body").innerHTML = "";
       document.getElementById("rules-form").classList.add("hidden");
@@ -1467,12 +1576,16 @@
     function init() {
       document.getElementById("register-form").addEventListener("submit", handleRegister);
       document.getElementById("login-form").addEventListener("submit", handleLogin);
-      document.getElementById("tag-btn").addEventListener("click", handleTag);
+      document.getElementById("tag-btn").addEventListener("click", showTagConfirm);
+      document.getElementById("tag-confirm-yes").addEventListener("click", confirmTag);
+      document.getElementById("tag-confirm-no").addEventListener("click", hideTagConfirm);
       document.getElementById("refresh-notifications").addEventListener("click", refreshNotifications);
       document.getElementById("init-form").addEventListener("submit", handleInit);
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
       document.getElementById("wipe-form").addEventListener("submit", handleWipe);
+      document.getElementById("delete-btn").addEventListener("click", handleDeletePlayer);
+      document.getElementById("delete-select").addEventListener("change", updateDeleteButton);
       document.getElementById("edit-rules-btn").addEventListener("click", openRulesEditor);
       document.getElementById("rules-cancel").addEventListener("click", closeRulesEditor);
       document.getElementById("rules-form").addEventListener("submit", handleSaveRules);

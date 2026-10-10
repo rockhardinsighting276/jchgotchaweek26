@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification, Setting
 from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn
 from rules import DEFAULT_RULES
-from game import init_circle, insert_player, undo_tag, do_tag, mint_token
+from game import init_circle, insert_player, undo_tag, delete_player, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -470,6 +470,28 @@ async def admin_undo_tag(body: UndoIn, p: Player = Depends(auth_player), db: Ses
         undo_tag(db, p, player, body.mode, anchor)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.delete("/admin/players/{player_id}")
+async def admin_delete_player(player_id: int, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    player = db.get(Player, player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    try:
+        avatar = delete_player(db, p, player)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if avatar:
+        f = Path("static") / avatar
+        if f.is_file() and AVATAR_FILE.match(f.name):
+            try:
+                f.unlink()
+            except OSError:
+                pass
     await notify_changed()
     return {"ok": True}
 
