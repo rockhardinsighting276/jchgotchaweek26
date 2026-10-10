@@ -31,6 +31,7 @@ class NicknameIn(BaseModel):
 
 class AnnounceIn(BaseModel):
     message: str
+    style: str = "announcement"   # announcement | urgent | reminder
 
 
 class CreateUserIn(BaseModel):

@@ -32,6 +32,7 @@ def init_circle(db: Session, admin: Player, shuffle=True):
         player.eliminated = False
         player.eliminated_at = None
         player.eliminated_by_id = None
+        player.eliminated_by_name = None
         player.score = 0
         player.last_tag_at = None
         player.score_last_updated = now
@@ -131,6 +132,7 @@ def do_tag(db: Session, tagger: Player):
     tagger.score_last_updated = now
     target.eliminated_at = now
     target.eliminated_by_id = tagger.id
+    target.eliminated_by_name = tagger.name
 
     new_target = db.get(Player, tagger.target_id) if tagger.target_id else None
 
@@ -198,6 +200,7 @@ def undo_tag(db: Session, admin: Player, player: Player, mode: str, anchor: Play
     player.eliminated = False
     player.eliminated_at = None
     player.eliminated_by_id = None
+    player.eliminated_by_name = None
     player.last_tag_at = None
     player.score_last_updated = now
     player.target_id = old_target.id
@@ -227,12 +230,14 @@ def delete_player(db: Session, admin: Player, player: Player):
     """Remove a player from the database, keeping the loop intact.
 
     If they were in play, the player hunting them inherits their target (hunter -> player -> next
-    becomes hunter -> next). Only that hunter is notified. Returns the avatar path so the caller
-    can delete the file.
+    becomes hunter -> next). Only that hunter is notified. A player who had asked to withdraw is
+    recorded as a withdrawal; anyone else is a removal, and the wording differs for everyone told.
+    Returns (avatar path, withdrew) so the caller can delete the file and report which it was.
     """
     if player.is_admin:
         raise ValueError("Admin accounts can't be deleted here")
 
+    withdrew = bool(player.withdraw_requested)
     now = datetime.utcnow()
     if player.active:
         hunter = (
@@ -242,13 +247,14 @@ def delete_player(db: Session, admin: Player, player: Player):
         )
         nxt = db.get(Player, player.target_id) if player.target_id else None
         if hunter is not None:
-            event = f"Player Removed: {player.name}"
+            event = f"Player {'Withdrawn' if withdrew else 'Removed'}: {player.name}"
+            left = "has withdrawn from the game" if withdrew else "has been removed from the game"
             if nxt is None or not nxt.active or nxt.id == hunter.id:
                 hunter.target_id = None
-                msg = f"Your target '{player.name}' has been removed from the game and no other players remain."
+                msg = f"Your target '{player.name}' {left} and no other players remain."
             else:
                 hunter.target_id = nxt.id
-                msg = f"Your target '{player.name}' has been removed from the game. Your new target is '{nxt.name}'."
+                msg = f"Your target '{player.name}' {left}. Your new target is '{nxt.name}'."
             _notify(db, admin, hunter, msg, now, event)
 
     # players they had tagged out lose the "tagged by" link; their own private notifications go with them
@@ -257,4 +263,4 @@ def delete_player(db: Session, admin: Player, player: Player):
     avatar = player.avatar_path
     db.delete(player)
     db.commit()
-    return avatar
+    return avatar, withdrew

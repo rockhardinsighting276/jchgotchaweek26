@@ -124,6 +124,7 @@
       border: 2px solid var(--border);
       background: var(--surface-2);
     }
+    .avatar.eliminated { filter: grayscale(1); opacity: 0.5; }
     .avatar.small { width: 40px; height: 40px; border-width: 1px; margin-right: 0.5rem; }
     .profile-top { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
     .upload-controls, .nickname-controls { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -346,10 +347,16 @@
       <div id="page-notifications" class="page hidden">
         <div id="announce-card" class="card admin-only hidden" style="margin-bottom: 1.5rem;">
           <h2 style="margin-top: 0;">Send announcement</h2>
-          <p class="muted">Every player sees it in their Notifications tab.</p>
+          <p class="muted">Every player sees it in their Notifications tab. Rule changes are made in the Rules tab, which tells players itself.</p>
           <form id="announce-form">
+            <label for="announce-style">Style</label>
+            <select id="announce-style">
+              <option value="announcement">Announcement</option>
+              <option value="urgent">Urgent</option>
+              <option value="reminder">Reminder</option>
+            </select>
             <label for="announce-message">Message</label>
-            <textarea id="announce-message" maxlength="1000" placeholder="Rule changes, schedule updates, reminders (max 1000 characters)"></textarea>
+            <textarea id="announce-message" maxlength="1000" placeholder="Schedule updates, reminders, news (max 1000 characters)"></textarea>
             <button type="submit">Send announcement</button>
           </form>
         </div>
@@ -410,6 +417,11 @@
             <h2 style="margin-top: 0;">Danger zone</h2>
             <h3 style="margin: 1rem 0 0.25rem;">Delete a player</h3>
             <p class="muted" style="margin-top: 0;">Permanently removes a player's account, notifications and avatar. If they are in the game, the player hunting them takes over their target and is told. This can't be undone.</p>
+            <div id="withdraw-prompt" class="hidden" style="margin-bottom: 0.75rem; padding: 0.6rem 0.75rem; border: 1px solid var(--danger); border-left-width: 4px; border-radius: 8px; background: var(--surface-2);">
+              <strong>Withdrawal requests</strong>
+              <div class="muted" style="margin: 0.15rem 0 0.5rem;">These players asked to leave the game. Select one, then delete them to process the request.</div>
+              <div id="withdraw-prompt-list" class="flex"></div>
+            </div>
             <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
               <select id="delete-select" aria-label="Player to delete"></select>
               <button type="button" id="delete-btn" class="danger" style="width: auto; white-space: nowrap;" disabled>Delete player</button>
@@ -430,7 +442,7 @@
   </main>
 
   <script>
-    const DEFAULT_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="%232563eb"/><text x="60" y="72" font-size="48" text-anchor="middle" fill="white" font-family="Arial,Helvetica,sans-serif">GW</text></svg>';
+    const DEFAULT_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><clipPath id="c"><circle cx="60" cy="60" r="60"/></clipPath></defs><circle cx="60" cy="60" r="60" fill="%230f766e"/><g clip-path="url(%23c)" fill="%23d6efeb"><circle cx="60" cy="46" r="20"/><ellipse cx="60" cy="112" rx="40" ry="32"/></g></svg>';
     const state = {
       token: null,
       user: null,
@@ -476,6 +488,12 @@
       const suffix = v >= 11 && v <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
       return n + suffix;
     }
+    const NOTE_STYLES = {
+      announcement: { label: "Announcement", pill: "" },
+      urgent: { label: "Urgent", pill: "background: var(--danger); color: #fff;", border: "var(--danger)" },
+      reminder: { label: "Reminder", pill: "background: var(--info-bg); color: var(--info-text);", border: "var(--info-text)" },
+      rules: { label: "Rules update", pill: "background: var(--surface-2); color: var(--text); border: 1px solid var(--border);" },
+    };
     const PLAYER_STATUS = { active: "Active", inactive: "Not in the current game", eliminated: "Eliminated" };
 
     function applyRole(user) {
@@ -500,7 +518,7 @@
       document.getElementById("player-handle").textContent = user?.name ?? "";
       document.getElementById("player-score").textContent = user?.score ?? 0;
       document.getElementById("player-status").textContent = user ? (PLAYER_STATUS[user.status] || "") : "";
-      updateAvatarDisplay(user?.avatar_url);
+      updateAvatarDisplay(user?.avatar_url, user?.status === "eliminated");
       applyRole(user);
       const nicknameInput = document.getElementById("nickname-input");
       if (nicknameInput) {
@@ -515,11 +533,12 @@
       }
     }
 
-    function updateAvatarDisplay(url) {
+    function updateAvatarDisplay(url, eliminated = false) {
       ["player-avatar", "account-avatar"].forEach((id) => {
         const img = document.getElementById(id);
         if (img) {
           img.src = url || DEFAULT_AVATAR;
+          img.classList.toggle("eliminated", !!eliminated);
         }
       });
     }
@@ -616,6 +635,7 @@
         avatar.className = "avatar small";
         avatar.src = leader.avatar_url || DEFAULT_AVATAR;
         avatar.alt = `${leader.name}'s avatar`;
+        if (leader.status === "eliminated") avatar.classList.add("eliminated");
         const nameText = document.createElement("span");
         nameText.textContent = leader.nickname || leader.name;
         nameWrap.append(avatar, nameText);
@@ -638,7 +658,7 @@
         if (leader.status === "active") {
           target.textContent = leader.target || "-";
         } else if (leader.status === "eliminated" && leader.tagged_by) {
-          target.textContent = `tagged by ${leader.tagged_by}`;
+          target.textContent = `tagged by ${leader.tagged_by}${leader.tagger_removed ? " (removed)" : ""}`;
           target.className = "muted";
         } else {
           target.textContent = "-";
@@ -704,7 +724,7 @@
       };
       panel.appendChild(modeRow(
         "tagger_place",
-        tagger ? `Take ${tagger.name}'s place (the tagger)` : "Take the tagger's place (unavailable: the tagger is no longer in play)",
+        tagger ? `Take ${tagger.name}'s place (the tagger)` : `Take the tagger's place (unavailable: ${player.tagged_by || "the tagger"} is no longer in the game)`,
         !tagger,
       ));
       panel.appendChild(modeRow("insert", "Insert elsewhere. The suggested spot is as far from the tagger as possible.", false));
@@ -779,7 +799,7 @@
         const by = document.createElement("span");
         by.className = "muted";
         by.style.flex = "1 1 8rem";
-        by.textContent = player.tagged_by ? `tagged by ${player.tagged_by}` : "tagger unknown";
+        by.textContent = player.tagged_by ? `tagged by ${player.tagged_by}${player.tagger_removed ? " (removed)" : ""}` : "tagger unknown";
         const isOpen = !!state.undo && state.undo.playerId === player.id;
         const btn = document.createElement("button");
         btn.type = "button";
@@ -933,11 +953,16 @@
           li.appendChild(fresh);
         }
         if (item.kind === "global") {
+          const look = NOTE_STYLES[item.style] || NOTE_STYLES.announcement;
           const badge = document.createElement("span");
           badge.className = "pill";
-          badge.style.marginLeft = "0";
-          badge.textContent = "Announcement";
+          badge.style.cssText = `margin-left: 0; ${look.pill}`;
+          badge.textContent = look.label;
           li.appendChild(badge);
+          if (look.border) {
+            li.style.borderLeft = `4px solid ${look.border}`;
+            li.style.paddingLeft = "0.75rem";
+          }
         }
         if (state.user?.is_admin && item.kind !== "global") {
           const to = document.createElement("div");
@@ -1107,6 +1132,7 @@
       state.user = Object.assign({}, state.user, me);
       document.getElementById("player-score").textContent = me.score ?? 0;
       document.getElementById("player-status").textContent = PLAYER_STATUS[me.status] || "";
+      updateAvatarDisplay(state.user.avatar_url, me.status === "eliminated");
       if (typeof me.cooldown_seconds === "number") setCooldown(me.cooldown_seconds);
     }
 
@@ -1413,11 +1439,31 @@
       leaders.forEach((l) => {
         const opt = document.createElement("option");
         opt.value = l.id;
-        opt.textContent = `${l.name} (${STATUS_LABELS[l.status] || l.status})`;
+        opt.textContent = `${l.name} (${STATUS_LABELS[l.status] || l.status}${l.withdraw_requested ? ", withdrawal requested" : ""})`;
         select.appendChild(opt);
       });
       if (previous && [...select.options].some((o) => o.value === previous)) select.value = previous;
       updateDeleteButton();
+
+      // suggest removing anyone who has asked to withdraw
+      const asked = leaders.filter((l) => l.withdraw_requested);
+      const prompt = document.getElementById("withdraw-prompt");
+      const list = document.getElementById("withdraw-prompt-list");
+      list.innerHTML = "";
+      prompt.classList.toggle("hidden", !asked.length);
+      asked.forEach((l) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "secondary";
+        chip.style.cssText = "width: auto; margin: 0; padding: 0.35rem 0.7rem;";
+        chip.textContent = l.name;
+        chip.addEventListener("click", () => {
+          select.value = String(l.id);
+          updateDeleteButton();
+          document.getElementById("delete-btn").focus();
+        });
+        list.appendChild(chip);
+      });
     }
 
     function updateDeleteButton() {
@@ -1429,10 +1475,13 @@
       const player = state.leaders.find((l) => l.id === id);
       if (!player) return;
       const inLoop = player.status === "active" ? " The player hunting them takes over their target." : "";
-      if (!confirm(`Delete '${player.name}' from the database? This permanently removes their account, notifications and avatar.${inLoop} This can't be undone.`)) return;
+      const lead = player.withdraw_requested
+        ? `Process the withdrawal of '${player.name}'? They asked to leave the game.`
+        : `Delete '${player.name}' from the database?`;
+      if (!confirm(`${lead} This permanently removes their account, notifications and avatar.${inLoop} This can't be undone.`)) return;
       try {
-        await api(`/admin/players/${id}`, { method: "DELETE" });
-        showStatus(`${player.name} was deleted.`, "success");
+        const res = await api(`/admin/players/${id}`, { method: "DELETE" });
+        showStatus(res.reason === "withdrawal" ? `${player.name}'s withdrawal has been processed.` : `${player.name} was removed.`, "success");
         await refreshLeaderboard();
       } catch (err) {
         showStatus(`Failed to delete the player: ${err.message}`, "error");
@@ -1574,9 +1623,10 @@
         return;
       }
       try {
-        await api("/admin/announce", { method: "POST", body: { message } });
+        const style = document.getElementById("announce-style").value;
+        await api("/admin/announce", { method: "POST", body: { message, style } });
         input.value = "";
-        showStatus("Announcement sent to all players.", "success");
+        showStatus(`${(NOTE_STYLES[style] || NOTE_STYLES.announcement).label} sent to all players.`, "success");
         await refreshNotifications();
       } catch (err) {
         showStatus(`Failed to send announcement: ${err.message}`, "error");

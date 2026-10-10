@@ -35,6 +35,8 @@ class Player(Base):
     notif_seen_id = Column(Integer, default=0)       # newest notification id this player has read
     eliminated_at = Column(DateTime, nullable=True)  # when they were tagged out (drives placement)
     eliminated_by_id = Column(Integer, nullable=True)  # who tagged them out
+    eliminated_by_name = Column(String, nullable=True)  # last known name of the tagger, kept if they are deleted
+    withdraw_requested = Column(Boolean, default=False)  # asked to leave the game; admins are prompted to remove them
 
     def public(self):
         return {
@@ -96,6 +98,7 @@ class Notification(Base):
     recipient_id = Column(Integer, ForeignKey("players.id"), nullable=True)
     message = Column(String(1000), nullable=False)
     event = Column(String, nullable=True)  # shared by every note one action produced; admins see them as one event
+    style = Column(String, nullable=True)  # global notes: announcement | urgent | reminder | rules
     target_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -107,6 +110,7 @@ class Notification(Base):
             "id": self.id,
             "kind": self.kind,
             "message": self.message,
+            "style": self.style or ("announcement" if self.kind == "global" else None),
             "target": self.target_name,
             "created_at": self.created_at.isoformat() + "Z",
         }
@@ -127,6 +131,8 @@ def ensure_notification_columns():
             conn.execute(text("ALTER TABLE notifications ADD COLUMN recipient_id INTEGER REFERENCES players(id)"))
         if "event" not in cols:
             conn.execute(text("ALTER TABLE notifications ADD COLUMN event TEXT"))
+        if "style" not in cols:
+            conn.execute(text("ALTER TABLE notifications ADD COLUMN style TEXT"))
 
 
 ensure_notification_columns()
@@ -157,6 +163,18 @@ def ensure_game_columns():
             conn.execute(text(
                 "UPDATE players SET eliminated_by_id = (SELECT tagger_id FROM notifications "
                 "WHERE kind = 'tagged' AND recipient_id = players.id ORDER BY id DESC LIMIT 1) WHERE eliminated = 1"
+            ))
+        if "eliminated_by_name" not in cols:
+            conn.execute(text("ALTER TABLE players ADD COLUMN eliminated_by_name TEXT"))
+            conn.execute(text(
+                "UPDATE players SET eliminated_by_name = (SELECT p2.name FROM players p2 "
+                "WHERE p2.id = players.eliminated_by_id) WHERE eliminated = 1"
+            ))
+        if "withdraw_requested" not in cols:
+            conn.execute(text("ALTER TABLE players ADD COLUMN withdraw_requested BOOLEAN DEFAULT 0"))
+            conn.execute(text(
+                "UPDATE players SET withdraw_requested = 1 WHERE id IN "
+                "(SELECT tagger_id FROM notifications WHERE kind = 'withdraw')"
             ))
 
 

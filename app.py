@@ -348,8 +348,12 @@ def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db))
         gone = pl.status() == "eliminated"
         row["target"] = names.get(pl.target_id) if pl.active else None
         row["placement"] = placement.get(pl.id)
-        row["tagged_by"] = names.get(pl.eliminated_by_id) if gone else None
-        row["tagged_by_id"] = pl.eliminated_by_id if gone else None
+        tagger_name = names.get(pl.eliminated_by_id)
+        # if the tagger has since been deleted, keep showing the last name we knew them by
+        row["tagged_by"] = (tagger_name or pl.eliminated_by_name) if gone else None
+        row["tagged_by_id"] = pl.eliminated_by_id if gone and tagger_name else None
+        row["tagger_removed"] = bool(gone and not tagger_name and pl.eliminated_by_name)
+        row["withdraw_requested"] = bool(pl.withdraw_requested)
         leaders.append(row)
     return {"leaders": leaders}
 
@@ -494,7 +498,7 @@ async def admin_delete_player(player_id: int, p: Player = Depends(auth_player), 
     if not player:
         raise HTTPException(404, "Player not found")
     try:
-        avatar = delete_player(db, p, player)
+        avatar, withdrew = delete_player(db, p, player)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     if avatar:
@@ -505,7 +509,7 @@ async def admin_delete_player(player_id: int, p: Player = Depends(auth_player), 
             except OSError:
                 pass
     await notify_changed()
-    return {"ok": True}
+    return {"ok": True, "reason": "withdrawal" if withdrew else "removal"}
 
 
 @app.post("/admin/users")
@@ -534,6 +538,9 @@ def admin_create_user(body: CreateUserIn, p: Player = Depends(auth_player), db: 
     return {"ok": True, "name": player.name, "is_admin": player.is_admin}
 
 
+ANNOUNCE_STYLES = {"announcement", "urgent", "reminder"}  # "rules" is reserved for the Rules tab
+
+
 @app.post("/admin/announce")
 async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
     if not p.is_admin:
@@ -543,7 +550,9 @@ async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db:
         raise HTTPException(400, "Message is required")
     if len(message) > 1000:
         raise HTTPException(400, "Message too long (max 1000 characters)")
-    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message)
+    if body.style not in ANNOUNCE_STYLES:
+        raise HTTPException(400, "Unknown announcement style")
+    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message, style=body.style)
     db.add(note)
     db.commit()
     db.refresh(note)
@@ -606,6 +615,7 @@ async def update_rules(body: RulesIn, p: Player = Depends(auth_player), db: Sess
         db.add(Notification(
             kind="global", recipient_id=None, tagger_id=p.id, created_at=now,
             message="The rules have been updated. Check the Rules tab for the latest version.",
+            style="rules",
         ))
     db.commit()
     await notify_changed()
@@ -632,6 +642,7 @@ async def withdraw(body: WithdrawIn, p: Player = Depends(auth_player), db: Sessi
             event=f"Withdrawal Request: {p.name}",
             message=f"URGENT: '{p.name}' wishes to withdraw from the game (currently {p.status()}).",
         ))
-        db.commit()
-        await notify_changed()
+    p.withdraw_requested = True  # lets the admin's delete-player section suggest removing them
+    db.commit()
+    await notify_changed()
     return {"ok": True}
