@@ -1,12 +1,24 @@
 import secrets, random
 from datetime import datetime
 from sqlalchemy.orm import Session
-from models import Player, Notification
+from models import Player, Notification, Setting
 
 TOKEN_LEN = 24
 
 def mint_token():
     return secrets.token_urlsafe(TOKEN_LEN)
+
+
+def _next_game(db: Session):
+    """Start a new game number. Players only see notifications from the current game."""
+    now = datetime.utcnow()
+    row = db.get(Setting, "game")
+    if row:
+        row.value = str(int(row.value) + 1)
+        row.updated_at = now
+    else:
+        db.add(Setting(key="game", value="1", updated_at=now))
+    db.flush()  # so notifications created next are stamped with the new number
 
 
 def _notify(db: Session, admin: Player, recipient: Player, message: str, when=None, event=None):
@@ -16,13 +28,21 @@ def _notify(db: Session, admin: Player, recipient: Player, message: str, when=No
     ))
 
 
-def init_circle(db: Session, admin: Player, shuffle=True):
+def init_circle(db: Session, admin: Player, shuffle=True, order=None):
     """Start (or restart) a game with every non-admin player."""
     players = db.query(Player).filter(Player.is_admin == False).order_by(Player.id).all()
     if len(players) < 2:
         raise ValueError("Need at least 2 players to start a game")
-    if shuffle:
+    if order is not None:
+        # the admin previewed this exact order, so use it as long as nobody has been added or removed since
+        by_id = {p.id: p for p in players}
+        if len(order) != len(by_id) or set(order) != set(by_id):
+            raise ValueError("The player list changed since the preview. Preview the order again.")
+        players = [by_id[i] for i in order]
+    elif shuffle:
         random.shuffle(players)
+
+    _next_game(db)  # a new game: every player's notification list starts fresh
 
     now = datetime.utcnow()
     for i, player in enumerate(players):

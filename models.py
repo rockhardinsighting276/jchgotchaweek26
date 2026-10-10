@@ -2,6 +2,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, create_engine, text, DateTime, Text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy import inspect
+from sqlalchemy import event as sa_event
 import os
 from datetime import datetime
 
@@ -99,6 +100,7 @@ class Notification(Base):
     message = Column(String(1000), nullable=False)
     event = Column(String, nullable=True)  # shared by every note one action produced; admins see them as one event
     style = Column(String, nullable=True)  # global notes: announcement | urgent | reminder | rules
+    game = Column(Integer, nullable=True)  # which game it belongs to (stamped on insert); players only see the current game
     target_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -111,6 +113,8 @@ class Notification(Base):
             "kind": self.kind,
             "message": self.message,
             "style": self.style or ("announcement" if self.kind == "global" else None),
+            "title": self.event if self.kind == "global" else None,
+            "game": self.game,
             "target": self.target_name,
             "created_at": self.created_at.isoformat() + "Z",
         }
@@ -190,3 +194,25 @@ class Setting(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+@sa_event.listens_for(Notification, "before_insert")
+def _stamp_game(mapper, connection, target):
+    """Every notification records which game it was created in (0 = before the first game)."""
+    if target.game is None:
+        value = connection.execute(text("SELECT value FROM settings WHERE key = 'game'")).scalar()
+        target.game = int(value) if value else 0
+
+
+def ensure_game_counter():
+    cols = {col["name"] for col in inspect(engine).get_columns("notifications")}
+    with engine.begin() as conn:
+        if "game" not in cols:
+            conn.execute(text("ALTER TABLE notifications ADD COLUMN game INTEGER DEFAULT 0"))
+            if conn.execute(text("SELECT COUNT(*) FROM notifications")).scalar():
+                # whatever is already there belongs to the game in progress
+                conn.execute(text("UPDATE notifications SET game = 1"))
+                conn.execute(text("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('game', '1', CURRENT_TIMESTAMP)"))
+
+
+ensure_game_counter()

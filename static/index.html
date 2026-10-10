@@ -333,6 +333,12 @@
                 </label>
                 <span class="muted" id="init-count"></span>
               </div>
+              <button type="button" id="preview-btn" class="secondary" style="width: auto; margin: 0 0 0.75rem;">Preview shuffle</button>
+              <div id="shuffle-preview" class="hidden" style="margin-bottom: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
+                <strong>Previewed order</strong>
+                <div class="muted" style="margin: 0.15rem 0 0.5rem;">Each player tags the next name along. Start Game uses exactly this order. Press Shuffle again if you want a different one.</div>
+                <div id="preview-chain" style="max-height: 12rem; overflow-y: auto; overflow-wrap: anywhere; line-height: 1.7;"></div>
+              </div>
               <button type="submit" id="init-btn" class="success">Start Game</button>
             </form>
           </div>
@@ -355,6 +361,8 @@
               <option value="urgent">Urgent</option>
               <option value="reminder">Reminder</option>
             </select>
+            <label for="announce-title">Title <span class="muted">(optional)</span></label>
+            <input id="announce-title" maxlength="80" placeholder="e.g. Dinner moved to 6pm" autocomplete="off">
             <label for="announce-message">Message</label>
             <textarea id="announce-message" maxlength="1000" placeholder="Schedule updates, reminders, news (max 1000 characters)"></textarea>
             <button type="submit">Send announcement</button>
@@ -450,6 +458,8 @@
       wsTicker: null,
       leaders: [],
       notifications: [],
+      currentGame: 0,
+      preview: null,
       unread: 0,
       undo: null,
       rules: null,
@@ -489,10 +499,10 @@
       return n + suffix;
     }
     const NOTE_STYLES = {
-      announcement: { label: "Announcement", pill: "" },
-      urgent: { label: "Urgent", pill: "background: var(--danger); color: #fff;", border: "var(--danger)" },
-      reminder: { label: "Reminder", pill: "background: var(--info-bg); color: var(--info-text);", border: "var(--info-text)" },
-      rules: { label: "Rules update", pill: "background: var(--surface-2); color: var(--text); border: 1px solid var(--border);" },
+      announcement: { label: "Announcement", pill: "", bar: "var(--accent)" },
+      urgent: { label: "Urgent", pill: "background: var(--danger); color: #fff;", bar: "var(--danger)" },
+      reminder: { label: "Reminder", pill: "background: var(--info-bg); color: var(--info-text);", bar: "var(--info-text)" },
+      rules: { label: "Rules update", pill: "background: var(--surface-2); color: var(--text); border: 1px solid var(--border);", bar: "var(--muted)" },
     };
     const PLAYER_STATUS = { active: "Active", inactive: "Not in the current game", eliminated: "Eliminated" };
 
@@ -871,9 +881,25 @@
       });
     }
 
+    function renderGameDivider(game) {
+      const li = document.createElement("li");
+      li.setAttribute("role", "separator");
+      li.style.cssText = "display: flex; align-items: center; gap: 0.75rem; margin: 1.5rem 0 0.25rem; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent);";
+      const line = () => {
+        const bar = document.createElement("span");
+        bar.style.cssText = "flex: 1; height: 2px; background: var(--accent); opacity: 0.6;";
+        return bar;
+      };
+      const label = document.createElement("span");
+      label.textContent = game === 0 ? "Before the first game" : `Game ${game}${game === state.currentGame ? " (current)" : ""}`;
+      li.append(line(), label, line());
+      return li;
+    }
+
     function renderUrgent(item) {
       const li = document.createElement("li");
-      li.style.cssText = "padding: 0.75rem 0 0.75rem 0.75rem; border-bottom: 1px solid var(--border); border-left: 4px solid var(--danger);";
+      const unread = item.id > state.seenId;
+      li.style.cssText = `padding: ${unread ? "0.75rem 0 0.75rem 0.75rem" : "0.75rem 0"}; border-bottom: 1px solid var(--border);${unread ? " border-left: 4px solid var(--danger);" : ""}`;
       const badge = document.createElement("span");
       badge.className = "pill";
       badge.style.cssText = "margin: 0 0.5rem 0 0; background: var(--danger); color: #fff;";
@@ -929,7 +955,12 @@
         return;
       }
       empty.classList.add("hidden");
+      let lastGame;
       list.forEach((item) => {
+        if (state.user?.is_admin && item.game !== undefined && item.game !== null && item.game !== lastGame) {
+          wrapper.appendChild(renderGameDivider(item.game));
+          lastGame = item.game;
+        }
         if (item.kind === "urgent") {
           wrapper.appendChild(renderUrgent(item));
           return;
@@ -942,16 +973,7 @@
         li.style.padding = "0.75rem 0";
         li.style.borderBottom = "1px solid var(--border)";
         const isNew = !state.user?.is_admin && item.kind !== "tag" && item.id > state.seenId;
-        if (isNew) {
-          li.style.borderLeft = "3px solid var(--accent)";
-          li.style.paddingLeft = "0.75rem";
-          const fresh = document.createElement("span");
-          fresh.className = "pill";
-          fresh.style.marginLeft = "0";
-          fresh.style.marginRight = "0.5rem";
-          fresh.textContent = "New";
-          li.appendChild(fresh);
-        }
+        let bar = null;  // the coloured edge only marks notifications that are still unread
         if (item.kind === "global") {
           const look = NOTE_STYLES[item.style] || NOTE_STYLES.announcement;
           const badge = document.createElement("span");
@@ -959,10 +981,25 @@
           badge.style.cssText = `margin-left: 0; ${look.pill}`;
           badge.textContent = look.label;
           li.appendChild(badge);
-          if (look.border) {
-            li.style.borderLeft = `4px solid ${look.border}`;
-            li.style.paddingLeft = "0.75rem";
+          if (item.title) {
+            const heading = document.createElement("strong");
+            heading.style.marginLeft = "0.5rem";
+            heading.textContent = item.title;
+            li.appendChild(heading);
           }
+          if (isNew) bar = look.bar;
+        } else if (isNew) {
+          bar = "var(--accent)";
+          const fresh = document.createElement("span");
+          fresh.className = "pill";
+          fresh.style.marginLeft = "0";
+          fresh.style.marginRight = "0.5rem";
+          fresh.textContent = "New";
+          li.appendChild(fresh);
+        }
+        if (bar) {
+          li.style.borderLeft = `4px solid ${bar}`;
+          li.style.paddingLeft = "0.75rem";
         }
         if (state.user?.is_admin && item.kind !== "global") {
           const to = document.createElement("div");
@@ -1101,6 +1138,7 @@
       const res = await api("/notifications");
       state.unread = res.unread || 0;
       state.seenId = res.seen_id || 0;
+      state.currentGame = res.current_game || 0;
       renderNotifications(res.notifications);
       updateBadge();
       if (state.currentPage === "notifications") markNotificationsRead();
@@ -1357,17 +1395,21 @@
         showStatus("Need at least two players. Create accounts in the Player Management tab first.", "error");
         return;
       }
+      const order = state.preview ? state.preview.ids : null;
+      const how = order ? " in the previewed order" : "";
       const warning = state.gameRunning
-        ? `Reset the game? Every score, placement and target will be cleared and ${count} players will be put into a new circle. This can't be undone.`
+        ? `Reset the game? Every score, placement and target will be cleared and ${count} players will be put into a new circle${how}. Every player's notifications will be cleared too. This can't be undone.`
         : state.gameFinished
-          ? `Start a new game with ${count} players? The finished game's results and placements will be cleared.`
-          : `Start a new game with ${count} players?`;
+          ? `Start a new game with ${count} players${how}? The finished game's results and placements will be cleared, along with every player's notifications.`
+          : `Start a new game with ${count} players${how}? Every player's notifications will be cleared.`;
       if (!confirm(warning)) return;
       try {
-        await api("/admin/init", { method: "POST", body: { shuffle } });
+        await api("/admin/init", { method: "POST", body: { shuffle, order } });
+        clearPreview();
         showStatus("Game started!", "success");
         await refreshLeaderboard();
       } catch (err) {
+        if (/preview/i.test(err.message)) clearPreview();
         showStatus(`Failed to start the game: ${err.message}`, "error");
       }
     }
@@ -1406,7 +1448,48 @@
     }
 
     // A running game puts the reset card (red) at the bottom of the Game tab; otherwise the start card (green) leads.
+    function previewOrder() {
+      if (state.leaders.length < 2) {
+        showStatus("Need at least two players to preview an order.", "error");
+        return;
+      }
+      const shuffle = document.getElementById("init-shuffle").checked;
+      const players = state.leaders.map((l) => ({ id: l.id, name: l.name })).sort((a, b) => a.id - b.id);
+      if (shuffle) {
+        for (let i = players.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [players[i], players[j]] = [players[j], players[i]];
+        }
+      }
+      state.preview = { ids: players.map((p) => p.id), names: players.map((p) => p.name) };
+      renderPreview();
+    }
+
+    function renderPreview() {
+      const box = document.getElementById("shuffle-preview");
+      const btn = document.getElementById("preview-btn");
+      const shuffle = document.getElementById("init-shuffle").checked;
+      btn.textContent = state.preview && shuffle ? "Shuffle again" : shuffle ? "Preview shuffle" : "Preview order";
+      box.classList.toggle("hidden", !state.preview);
+      if (state.preview) {
+        const names = state.preview.names;
+        document.getElementById("preview-chain").textContent = `${names.join(" → ")} → back to ${names[0]}`;
+      }
+    }
+
+    function clearPreview() {
+      state.preview = null;
+      renderPreview();
+    }
+
     function renderStartCard(leaders) {
+      if (state.preview) {
+        const current = new Set(leaders.map((l) => l.id));
+        if (current.size !== state.preview.ids.length || state.preview.ids.some((id) => !current.has(id))) {
+          clearPreview();
+          showStatus("The player list changed, so the shuffle preview was cleared. Preview again before starting.");
+        }
+      }
       const active = leaders.filter((l) => l.status === "active").length;
       const running = active >= 2;
       state.gameRunning = running;
@@ -1423,6 +1506,7 @@
       btn.textContent = running ? "Reset Game" : "Start Game";
       btn.classList.toggle("danger", running);
       btn.classList.toggle("success", !running);
+      renderPreview();
       if (running && grid.lastElementChild !== card) grid.appendChild(card);
       if (!running && grid.firstElementChild !== card) grid.insertBefore(card, grid.firstElementChild);
     }
@@ -1624,8 +1708,10 @@
       }
       try {
         const style = document.getElementById("announce-style").value;
-        await api("/admin/announce", { method: "POST", body: { message, style } });
+        const titleInput = document.getElementById("announce-title");
+        await api("/admin/announce", { method: "POST", body: { title: titleInput.value.trim(), message, style } });
         input.value = "";
+        titleInput.value = "";
         showStatus(`${(NOTE_STYLES[style] || NOTE_STYLES.announcement).label} sent to all players.`, "success");
         await refreshNotifications();
       } catch (err) {
@@ -1706,6 +1792,8 @@
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
       document.getElementById("wipe-form").addEventListener("submit", handleWipe);
+      document.getElementById("preview-btn").addEventListener("click", previewOrder);
+      document.getElementById("init-shuffle").addEventListener("change", clearPreview);
       document.getElementById("withdraw-btn").addEventListener("click", openWithdraw);
       document.getElementById("withdraw-cancel").addEventListener("click", closeWithdraw);
       document.getElementById("withdraw-form").addEventListener("submit", handleWithdraw);

@@ -15,6 +15,7 @@ class LoginIn(BaseModel):
 
 class InitIn(BaseModel):
     shuffle: bool = True
+    order: list[int] | None = None   # player ids in the order previewed by the admin
 
 
 class TagOut(BaseModel):
@@ -31,6 +32,7 @@ class NicknameIn(BaseModel):
 
 class AnnounceIn(BaseModel):
     message: str
+    title: str | None = None
     style: str = "announcement"   # announcement | urgent | reminder
 
 

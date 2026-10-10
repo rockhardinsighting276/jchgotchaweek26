@@ -378,6 +378,7 @@ def group_events(notes):
             items.append({
                 "id": grp[0].id,
                 "kind": "urgent",
+                "game": grp[0].game,
                 "title": grp[0].event or "Withdrawal request",
                 "message": grp[0].message,
                 "created_at": grp[0].created_at.isoformat() + "Z",
@@ -395,6 +396,7 @@ def group_events(notes):
         items.append({
             "id": grp[-1].id,
             "kind": "event",
+            "game": grp[0].game,
             "title": title,
             "created_at": grp[0].created_at.isoformat() + "Z",
             "lines": [{"recipient": n.recipient.name if n.recipient else None, "message": n.message} for n in grp],
@@ -403,10 +405,17 @@ def group_events(notes):
     return items[:150]
 
 
+def current_game(db: Session) -> int:
+    row = db.get(Setting, "game")
+    return int(row.value) if row else 0
+
+
 def visible_notes(db: Session, p: Player):
     q = db.query(Notification).filter(Notification.kind.isnot(None))
     if not p.is_admin:
-        q = q.filter(or_(Notification.kind == "global", Notification.recipient_id == p.id))
+        # starting a game wipes players' notification lists; admins keep the full history
+        q = q.filter(Notification.game == current_game(db),
+                     or_(Notification.kind == "global", Notification.recipient_id == p.id))
     return q
 
 
@@ -432,6 +441,7 @@ def notifications(p: Player = Depends(auth_player), db: Session = Depends(get_db
         "notifications": group_events(notes) if p.is_admin else [n.public() for n in notes],
         "unread": unread,
         "seen_id": seen,
+        "current_game": current_game(db),
     }
 
 
@@ -451,7 +461,7 @@ async def admin_init(body: InitIn, p: Player = Depends(auth_player), db: Session
     if not p.is_admin:
         raise HTTPException(403, "Admin only")
     try:
-        init_circle(db, p, shuffle=body.shuffle)
+        init_circle(db, p, shuffle=body.shuffle, order=body.order)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     await notify_changed()
@@ -552,7 +562,11 @@ async def admin_announce(body: AnnounceIn, p: Player = Depends(auth_player), db:
         raise HTTPException(400, "Message too long (max 1000 characters)")
     if body.style not in ANNOUNCE_STYLES:
         raise HTTPException(400, "Unknown announcement style")
-    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message, style=body.style)
+    title = (body.title or "").strip()
+    if len(title) > 80:
+        raise HTTPException(400, "Title too long (max 80 characters)")
+    note = Notification(kind="global", recipient_id=None, tagger_id=p.id, message=message, style=body.style,
+                        event=title or None)
     db.add(note)
     db.commit()
     db.refresh(note)
@@ -572,6 +586,7 @@ async def admin_wipe(body: WipeIn, p: Player = Depends(auth_player), db: Session
     db.query(Notification).delete()
     db.query(Player).update({Player.target_id: None})
     db.query(Player).delete()
+    db.query(Setting).filter(Setting.key == "game").delete()  # game numbering restarts; the rules are kept
     db.commit()
     for f in AVATAR_DIR.iterdir():
         if f.is_file() and AVATAR_FILE.match(f.name):
@@ -615,7 +630,7 @@ async def update_rules(body: RulesIn, p: Player = Depends(auth_player), db: Sess
         db.add(Notification(
             kind="global", recipient_id=None, tagger_id=p.id, created_at=now,
             message="The rules have been updated. Check the Rules tab for the latest version.",
-            style="rules",
+            style="rules", event="Rules updated",
         ))
     db.commit()
     await notify_changed()
