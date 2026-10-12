@@ -38,6 +38,7 @@ class Player(Base):
     eliminated_by_id = Column(Integer, nullable=True)  # who tagged them out
     eliminated_by_name = Column(String, nullable=True)  # last known name of the tagger, kept if they are deleted
     withdraw_requested = Column(Boolean, default=False)  # asked to leave the game; admins are prompted to remove them
+    eliminated_reason = Column(Text, nullable=True)  # set when an admin (not a tag) eliminated them
 
     def public(self):
         return {
@@ -180,6 +181,8 @@ def ensure_game_columns():
                 "UPDATE players SET withdraw_requested = 1 WHERE id IN "
                 "(SELECT tagger_id FROM notifications WHERE kind = 'withdraw')"
             ))
+        if "eliminated_reason" not in cols:
+            conn.execute(text("ALTER TABLE players ADD COLUMN eliminated_reason TEXT"))
 
 
 ensure_game_columns()

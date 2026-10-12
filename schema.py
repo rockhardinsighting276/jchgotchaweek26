@@ -67,3 +67,12 @@ class RulesIn(BaseModel):
 
 class WithdrawIn(BaseModel):
     password: str
+
+
+class EliminateIn(BaseModel):
+    player_id: int
+    reason: str
+
+
+class PlayersLeftIn(BaseModel):
+    mode: str   # show | hidden | off

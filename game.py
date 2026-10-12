@@ -53,6 +53,7 @@ def init_circle(db: Session, admin: Player, shuffle=True, order=None):
         player.eliminated_at = None
         player.eliminated_by_id = None
         player.eliminated_by_name = None
+        player.eliminated_reason = None
         player.score = 0
         player.last_tag_at = None
         player.score_last_updated = now
@@ -195,6 +196,7 @@ def undo_tag(db: Session, admin: Player, player: Player, mode: str, anchor: Play
     if player.is_admin or player.active or not player.eliminated:
         raise ValueError("Only eliminated players can be restored")
     tagger = db.get(Player, player.eliminated_by_id) if player.eliminated_by_id else None
+    by_admin = bool(player.eliminated_reason)
 
     if mode == "tagger_place":
         if tagger is None or tagger.is_admin or not tagger.active:
@@ -221,12 +223,16 @@ def undo_tag(db: Session, admin: Player, player: Player, mode: str, anchor: Play
     player.eliminated_at = None
     player.eliminated_by_id = None
     player.eliminated_by_name = None
+    player.eliminated_reason = None
     player.last_tag_at = None
     player.score_last_updated = now
     player.target_id = old_target.id
     anchor.target_id = player.id
 
-    event = f"Tag Undone: {player.name} restored" + (f" (tagged by {tagger.name})" if tagger else "")
+    if by_admin:
+        event = f"Elimination Undone: {player.name} restored"
+    else:
+        event = f"Tag Undone: {player.name} restored" + (f" (tagged by {tagger.name})" if tagger else "")
     _notify(db, admin, player,
             f"An admin reversed your elimination. You are back in the game, your target is '{old_target.name}'.", now, event)
     if old_target.id == anchor.id:
@@ -284,3 +290,54 @@ def delete_player(db: Session, admin: Player, player: Player):
     db.delete(player)
     db.commit()
     return avatar, withdrew
+
+
+def eliminate_player(db: Session, admin: Player, player: Player, reason: str):
+    """An admin eliminates a player (they stay in the database, unlike delete_player).
+
+    Same loop repair as a tag: whoever was hunting them inherits their target, so the circle stays
+    unbroken. Nobody is credited with a tag. The eliminated player is told the reason; the hunter is
+    told their target changed. Nobody else is notified.
+    """
+    if player.is_admin or not player.active:
+        raise ValueError("Only players currently in the game can be eliminated")
+    alive_before = (
+        db.query(Player).filter(Player.active == True, Player.is_admin == False).count()
+    )
+    if alive_before < 2:
+        raise ValueError("There is no game running to eliminate players from")
+    remaining = alive_before - 1
+
+    hunter = (
+        db.query(Player)
+        .filter(Player.active == True, Player.is_admin == False, Player.target_id == player.id, Player.id != player.id)
+        .first()
+    )
+    nxt = db.get(Player, player.target_id) if player.target_id else None
+    now = datetime.utcnow()
+    event = f"Player Eliminated by Admin: {player.name}"
+
+    if hunter is not None:
+        if remaining <= 1 or nxt is None or not nxt.active or nxt.id == hunter.id:
+            hunter.target_id = None
+            msg = f"Your target '{player.name}' was eliminated by the organisers."
+            if remaining <= 1:
+                msg += " No other players remain, you finished 1st!"
+        else:
+            hunter.target_id = nxt.id
+            msg = f"Your target '{player.name}' was eliminated by the organisers. Your new target is '{nxt.name}'."
+        _notify(db, admin, hunter, msg, now, event)
+
+    player.active = False
+    player.eliminated = True
+    player.eliminated_at = now
+    player.eliminated_by_id = None
+    player.eliminated_by_name = None
+    player.eliminated_reason = reason
+    player.target_id = None
+    _notify(db, admin, player,
+            f"You have been eliminated by the organisers, you finished {ordinal(alive_before)}. Reason: {reason}", now, event)
+
+    db.commit()
+    db.refresh(player)
+    return player

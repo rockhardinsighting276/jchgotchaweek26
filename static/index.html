@@ -240,12 +240,18 @@
 
       <div id="page-tag" class="page">
         <div class="card">
-          <div class="profile-top">
-            <img id="player-avatar" class="avatar" src="" alt="Your avatar" />
-            <div>
-              <h2 style="margin: 0;">Welcome, <span id="player-name"></span></h2>
-              <div class="muted">Score: <span id="player-score">0</span></div>
-              <div class="muted">Status: <span id="player-status"></span></div>
+          <div class="profile-top" style="justify-content: space-between;">
+            <div style="display: flex; gap: 1rem; align-items: center; min-width: 0;">
+              <img id="player-avatar" class="avatar" src="" alt="Your avatar" />
+              <div>
+                <h2 style="margin: 0;">Welcome, <span id="player-name"></span></h2>
+                <div class="muted">Score: <span id="player-score">0</span></div>
+                <div class="muted">Status: <span id="player-status"></span></div>
+              </div>
+            </div>
+            <div id="players-left-box" class="hidden" style="text-align: right; flex: none;">
+              <div id="players-left-count" style="font-size: 2.25rem; font-weight: 800; line-height: 1;">??</div>
+              <div class="muted" style="margin-top: 0.15rem;">Players left</div>
             </div>
           </div>
           <hr style="border: none; border-top: 1px solid var(--border); margin: 1rem 0;">
@@ -322,29 +328,51 @@
 
       <div id="page-game" class="page hidden">
         <div class="grid" id="game-grid">
-          <div class="card" id="start-card">
-            <h2 id="start-title" style="margin-top: 0;">Start game</h2>
-            <p class="muted" id="start-desc"></p>
-            <form id="init-form">
-              <div class="flex" style="margin-bottom: 0.75rem;">
-                <label class="flex" style="gap: 0.35rem; margin: 0;">
-                  <input type="checkbox" id="init-shuffle" checked>
-                  Shuffle order
-                </label>
-                <span class="muted" id="init-count"></span>
-              </div>
-              <button type="button" id="preview-btn" class="secondary" style="width: auto; margin: 0 0 0.75rem;">Preview shuffle</button>
-              <div id="shuffle-preview" class="hidden" style="margin-bottom: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
-                <strong>Previewed order</strong>
-                <div class="muted" style="margin: 0.15rem 0 0.5rem;">Each player tags the next name along. Start Game uses exactly this order. Press Shuffle again if you want a different one.</div>
-                <div id="preview-chain" style="max-height: 12rem; overflow-y: auto; overflow-wrap: anywhere; line-height: 1.7;"></div>
-              </div>
-              <button type="submit" id="init-btn" class="success">Start Game</button>
+          <div class="grid" id="start-group">
+            <div class="card" id="counter-card">
+              <h2 style="margin-top: 0;">Players-left counter</h2>
+              <p class="muted">The number of players still in the game, shown on the right of each player's Welcome card. Hiding it shows ?? instead; turning it off removes it entirely.</p>
+              <select id="players-left-mode" aria-label="Players-left counter" style="margin-bottom: 0;">
+                <option value="show">Show the number</option>
+                <option value="hidden">Hide the number (shows ??)</option>
+                <option value="off">Turn the counter off</option>
+              </select>
+            </div>
+            <div class="card" id="start-card">
+              <h2 id="start-title" style="margin-top: 0;">Start game</h2>
+              <p class="muted" id="start-desc"></p>
+              <form id="init-form">
+                <div class="flex" style="margin-bottom: 0.75rem;">
+                  <label class="flex" style="gap: 0.35rem; margin: 0;">
+                    <input type="checkbox" id="init-shuffle" checked>
+                    Shuffle order
+                  </label>
+                  <span class="muted" id="init-count"></span>
+                </div>
+                <button type="button" id="preview-btn" class="secondary" style="width: auto; margin: 0 0 0.75rem;">Preview shuffle</button>
+                <div id="shuffle-preview" class="hidden" style="margin-bottom: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
+                  <strong>Previewed order</strong>
+                  <div class="muted" style="margin: 0.15rem 0 0.5rem;">Each player tags the next name along. Start Game uses exactly this order. Press Shuffle again if you want a different one.</div>
+                  <div id="preview-chain" style="max-height: 12rem; overflow-y: auto; overflow-wrap: anywhere; line-height: 1.7;"></div>
+                </div>
+                <button type="submit" id="init-btn" class="success">Start Game</button>
+              </form>
+            </div>
+          </div>
+          <div class="card" id="eliminate-card">
+            <h2 style="margin-top: 0;">Eliminate a player</h2>
+            <p class="muted">For objective-based eliminations, such as players with no tags after 48 hours. The player is eliminated, not deleted. The player hunting them takes over their target so the circle stays intact, and the eliminated player is told your reason. You can undo it below.</p>
+            <form id="eliminate-form">
+              <label for="eliminate-select">Player</label>
+              <select id="eliminate-select"></select>
+              <label for="eliminate-reason">Reason <span class="muted">(required, shown to the player)</span></label>
+              <textarea id="eliminate-reason" maxlength="200" style="min-height: 4.5rem;" placeholder="e.g. No tags within 48 hours"></textarea>
+              <button type="submit" id="eliminate-btn" class="danger" disabled>Eliminate player</button>
             </form>
           </div>
           <div class="card" id="undo-card">
-            <h2 style="margin-top: 0;">Undo a tag</h2>
-            <p class="muted">If a dispute is upheld, bring an eliminated player back. The tagger's point is removed. Only the restored player, the player whose target changes and the tagger are notified.</p>
+            <h2 style="margin-top: 0;">Undo a tag or elimination</h2>
+            <p class="muted">If a dispute is upheld, or an elimination was a mistake, bring an eliminated player back. A wrongful tagger's point is removed. Only the restored player, the player whose target changes and the tagger (if there was one) are notified.</p>
             <div id="undo-list"></div>
           </div>
         </div>
@@ -529,6 +557,7 @@
       document.getElementById("player-score").textContent = user?.score ?? 0;
       document.getElementById("player-status").textContent = user ? (PLAYER_STATUS[user.status] || "") : "";
       updateAvatarDisplay(user?.avatar_url, user?.status === "eliminated");
+      renderPlayersLeft(user);
       applyRole(user);
       const nicknameInput = document.getElementById("nickname-input");
       if (nicknameInput) {
@@ -667,8 +696,11 @@
         const target = document.createElement("td");
         if (leader.status === "active") {
           target.textContent = leader.target || "-";
+        } else if (leader.status === "eliminated" && leader.eliminated_reason) {
+          target.textContent = `Eliminated by admin: ${leader.eliminated_reason}`;
+          target.className = "muted";
         } else if (leader.status === "eliminated" && leader.tagged_by) {
-          target.textContent = `tagged by ${leader.tagged_by}${leader.tagger_removed ? " (removed)" : ""}`;
+          target.textContent = `Tagged by ${leader.tagged_by}${leader.tagger_removed ? " (removed)" : ""}`;
           target.className = "muted";
         } else {
           target.textContent = "-";
@@ -734,7 +766,8 @@
       };
       panel.appendChild(modeRow(
         "tagger_place",
-        tagger ? `Take ${tagger.name}'s place (the tagger)` : `Take the tagger's place (unavailable: ${player.tagged_by || "the tagger"} is no longer in the game)`,
+        tagger ? `Take ${tagger.name}'s place (the tagger)` : player.eliminated_reason ? "Take the tagger's place (unavailable: an admin eliminated them, so there is no tagger)"
+          : `Take the tagger's place (unavailable: ${player.tagged_by || "the tagger"} is no longer in the game)`,
         !tagger,
       ));
       panel.appendChild(modeRow("insert", "Insert elsewhere. The suggested spot is as far from the tagger as possible.", false));
@@ -809,7 +842,8 @@
         const by = document.createElement("span");
         by.className = "muted";
         by.style.flex = "1 1 8rem";
-        by.textContent = player.tagged_by ? `tagged by ${player.tagged_by}${player.tagger_removed ? " (removed)" : ""}` : "tagger unknown";
+        by.textContent = player.eliminated_reason ? `Eliminated by admin: ${player.eliminated_reason}`
+          : player.tagged_by ? `Tagged by ${player.tagged_by}${player.tagger_removed ? " (removed)" : ""}` : "Tagger unknown";
         const isOpen = !!state.undo && state.undo.playerId === player.id;
         const btn = document.createElement("button");
         btn.type = "button";
@@ -833,6 +867,7 @@
       renderUndoTools(leaders);
       renderStartCard(leaders);
       renderDeleteTool(leaders);
+      renderEliminateTool(leaders);
       const active = leaders.filter((l) => l.status === "active");
       const inactive = leaders.filter((l) => l.status === "inactive");
       const count = document.getElementById("init-count");
@@ -1171,6 +1206,7 @@
       document.getElementById("player-score").textContent = me.score ?? 0;
       document.getElementById("player-status").textContent = PLAYER_STATUS[me.status] || "";
       updateAvatarDisplay(state.user.avatar_url, me.status === "eliminated");
+      renderPlayersLeft(state.user);
       if (typeof me.cooldown_seconds === "number") setCooldown(me.cooldown_seconds);
     }
 
@@ -1495,7 +1531,7 @@
       state.gameRunning = running;
       state.gameFinished = active === 1 && leaders.some((l) => l.status === "eliminated");
       const grid = document.getElementById("game-grid");
-      const card = document.getElementById("start-card");
+      const card = document.getElementById("start-group");  // the counter control always sits just above Start/Reset
       const btn = document.getElementById("init-btn");
       document.getElementById("start-title").textContent = running ? "Reset game" : "Start game";
       document.getElementById("start-desc").textContent = running
@@ -1509,6 +1545,85 @@
       renderPreview();
       if (running && grid.lastElementChild !== card) grid.appendChild(card);
       if (!running && grid.firstElementChild !== card) grid.insertBefore(card, grid.firstElementChild);
+    }
+
+    // The players-left number on the right of the Welcome card; admins choose whether players see it.
+    function renderPlayersLeft(user) {
+      const box = document.getElementById("players-left-box");
+      const mode = user?.players_left_mode || "show";
+      const select = document.getElementById("players-left-mode");
+      if (user?.is_admin && user.players_left_mode && document.activeElement !== select) select.value = user.players_left_mode;
+      if (!user || user.is_admin || mode === "off") {
+        box.classList.add("hidden");
+        return;
+      }
+      box.classList.remove("hidden");
+      const n = user.players_left;
+      document.getElementById("players-left-count").textContent =
+        mode === "hidden" || n === null || n === undefined ? "??" : n > 0 ? String(n) : "\u2013";
+    }
+
+    async function handlePlayersLeftMode() {
+      const mode = document.getElementById("players-left-mode").value;
+      try {
+        await api("/admin/players-left", { method: "PUT", body: { mode } });
+        state.user = Object.assign({}, state.user, { players_left_mode: mode });
+        const note = { show: "Players can see how many players are left.", hidden: "Players now see ?? instead of the number.", off: "The players-left counter is turned off." };
+        showStatus(note[mode], "success");
+      } catch (err) {
+        showStatus(`Failed to change the counter: ${err.message}`, "error");
+      }
+    }
+
+    function renderEliminateTool(leaders) {
+      const select = document.getElementById("eliminate-select");
+      const reason = document.getElementById("eliminate-reason");
+      const previous = select.value;
+      const active = leaders.filter((l) => l.status === "active");
+      const running = active.length >= 2;
+      select.innerHTML = "";
+      const first = document.createElement("option");
+      first.value = "";
+      first.textContent = running ? "Choose a player..." : "No game is running";
+      select.appendChild(first);
+      active.forEach((l) => {
+        const opt = document.createElement("option");
+        opt.value = l.id;
+        opt.textContent = l.target ? `${l.name} (targets ${l.target})` : l.name;
+        select.appendChild(opt);
+      });
+      select.disabled = !running;
+      reason.disabled = !running;
+      if (previous && [...select.options].some((o) => o.value === previous)) select.value = previous;
+      updateEliminateButton();
+    }
+
+    // typing a reason is the "are you sure": nothing happens until there is a player and a reason
+    function updateEliminateButton() {
+      const ready = !!document.getElementById("eliminate-select").value
+        && document.getElementById("eliminate-reason").value.trim().length >= 3;
+      document.getElementById("eliminate-btn").disabled = !ready;
+    }
+
+    async function handleEliminate(event) {
+      event.preventDefault();
+      const id = Number(document.getElementById("eliminate-select").value);
+      const reasonInput = document.getElementById("eliminate-reason");
+      const reason = reasonInput.value.trim();
+      const player = state.leaders.find((l) => l.id === id);
+      if (!player || reason.length < 3) {
+        showStatus("Choose a player and type a reason first.", "error");
+        return;
+      }
+      try {
+        await api("/admin/eliminate", { method: "POST", body: { player_id: id, reason } });
+        reasonInput.value = "";
+        updateEliminateButton();
+        showStatus(`${player.name} was eliminated.`, "success");
+        await refreshLeaderboard();
+      } catch (err) {
+        showStatus(`Failed to eliminate the player: ${err.message}`, "error");
+      }
     }
 
     function renderDeleteTool(leaders) {
@@ -1792,6 +1907,10 @@
       document.getElementById("announce-form").addEventListener("submit", handleAnnounce);
       document.getElementById("create-user-form").addEventListener("submit", handleCreateUser);
       document.getElementById("wipe-form").addEventListener("submit", handleWipe);
+      document.getElementById("eliminate-form").addEventListener("submit", handleEliminate);
+      document.getElementById("eliminate-select").addEventListener("change", updateEliminateButton);
+      document.getElementById("eliminate-reason").addEventListener("input", updateEliminateButton);
+      document.getElementById("players-left-mode").addEventListener("change", handlePlayersLeftMode);
       document.getElementById("preview-btn").addEventListener("click", previewOrder);
       document.getElementById("init-shuffle").addEventListener("change", clearPreview);
       document.getElementById("withdraw-btn").addEventListener("click", openWithdraw);

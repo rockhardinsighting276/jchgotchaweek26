@@ -10,9 +10,9 @@ from pathlib import Path
 import bcrypt
 from datetime import datetime, timedelta
 from models import SessionLocal, Player, Notification, Setting
-from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn, WithdrawIn
+from schema import RegisterIn, LoginIn, InitIn, TagOut, NicknameIn, AnnounceIn, CreateUserIn, InsertIn, WipeIn, ReadIn, UndoIn, RulesIn, WithdrawIn, EliminateIn, PlayersLeftIn
 from rules import DEFAULT_RULES
-from game import init_circle, insert_player, undo_tag, delete_player, do_tag, mint_token
+from game import init_circle, insert_player, undo_tag, delete_player, eliminate_player, do_tag, mint_token
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -217,7 +217,9 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 
 @app.get("/me")
-def me(p: Player = Depends(auth_player)):
+def me(p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    mode = get_setting(db, PLAYERS_LEFT_KEY, "show")
+    left = db.query(Player).filter(Player.active == True, Player.is_admin == False).count()
     return {
         "id": p.id,
         "name": p.name,
@@ -228,6 +230,9 @@ def me(p: Player = Depends(auth_player)):
         "avatar_url": p.avatar_url(),
         "nickname": p.nickname,
         "cooldown_seconds": cooldown_seconds(p),
+        "players_left_mode": mode,
+        # a hidden or disabled counter is never sent to players, so it can't be read from the page
+        "players_left": left if (mode == "show" or p.is_admin) else None,
     }
 
 
@@ -354,6 +359,7 @@ def leaderboard(p: Player = Depends(auth_player), db: Session = Depends(get_db))
         row["tagged_by_id"] = pl.eliminated_by_id if gone and tagger_name else None
         row["tagger_removed"] = bool(gone and not tagger_name and pl.eliminated_by_name)
         row["withdraw_requested"] = bool(pl.withdraw_requested)
+        row["eliminated_reason"] = pl.eliminated_reason if gone else None
         leaders.append(row)
     return {"leaders": leaders}
 
@@ -403,6 +409,15 @@ def group_events(notes):
         })
     items.sort(key=lambda i: (i["created_at"], i["id"]), reverse=True)
     return items[:150]
+
+
+PLAYERS_LEFT_KEY = "players_left"
+PLAYERS_LEFT_MODES = {"show", "hidden", "off"}
+
+
+def get_setting(db: Session, key: str, default: str) -> str:
+    row = db.get(Setting, key)
+    return row.value if row else default
 
 
 def current_game(db: Session) -> int:
@@ -520,6 +535,43 @@ async def admin_delete_player(player_id: int, p: Player = Depends(auth_player), 
                 pass
     await notify_changed()
     return {"ok": True, "reason": "withdrawal" if withdrew else "removal"}
+
+
+@app.post("/admin/eliminate")
+async def admin_eliminate(body: EliminateIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    player = db.get(Player, body.player_id)
+    if not player:
+        raise HTTPException(404, "Player not found")
+    reason = body.reason.strip()
+    if len(reason) < 3:
+        raise HTTPException(400, "Give a reason for the elimination (at least 3 characters)")
+    if len(reason) > 200:
+        raise HTTPException(400, "Reason too long (max 200 characters)")
+    try:
+        eliminate_player(db, p, player, reason)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await notify_changed()
+    return {"ok": True}
+
+
+@app.put("/admin/players-left")
+async def set_players_left(body: PlayersLeftIn, p: Player = Depends(auth_player), db: Session = Depends(get_db)):
+    if not p.is_admin:
+        raise HTTPException(403, "Admin only")
+    if body.mode not in PLAYERS_LEFT_MODES:
+        raise HTTPException(400, "Unknown mode")
+    row = db.get(Setting, PLAYERS_LEFT_KEY)
+    if row:
+        row.value = body.mode
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(Setting(key=PLAYERS_LEFT_KEY, value=body.mode, updated_at=datetime.utcnow()))
+    db.commit()
+    await notify_changed()
+    return {"ok": True, "mode": body.mode}
 
 
 @app.post("/admin/users")
